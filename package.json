@@ -1,0 +1,18 @@
+{
+  "name": "nonamecabal",
+  "version": "1.0.0",
+  "description": "A autoSniper Bot for memecoins ",
+  "main": "index.ts",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "npx tsx index.ts"
+  },
+  "author": "arkade",
+  "license": "ISC",
+  "dependencies": {
+    "@types/node": "^22.9.3",
+    "dotenv": "^16.4.5",
+    "telegraf": "^4.16.3",
+    "tsx": "^4.19.2"
+  }
+}
