@@ -1,6 +1,6 @@
 import { Keypair } from "@solana/web3.js";
 
-async function createNewSolanaWallet(telegramId: string) {
+export default async function createNewSolanaWallet(telegramId: string) {
     const solanaWallet = Keypair.generate();
     const newWallet = {
         telegram_id: telegramId,
@@ -12,4 +12,3 @@ async function createNewSolanaWallet(telegramId: string) {
     return newWallet
 }
 
-export default createNewSolanaWallet;
