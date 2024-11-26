@@ -1,8 +1,8 @@
 import { Telegraf, Context, Markup } from 'telegraf';
 import getUser from '../helper_functions/getUserInfo';
 
-const startCommand = (bot: Telegraf<Context>) => {
-    bot.start(async (ctx) => {
+const startAction = (bot: Telegraf<Context>) => {
+    bot.action("start", async (ctx) => {
         try {
             const telegram_id = ctx.from?.id.toString() || '';
             const userDetails = await getUser(telegram_id);
@@ -20,7 +20,7 @@ const startCommand = (bot: Telegraf<Context>) => {
             ]);
 
             const welcomeMessage = `
-🤖 **Welcome to NoNameCabal, ${ctx.from?.first_name || 'Trader'}!**
+🤖 **Welcome back to NoNameCabal, ${ctx.from?.first_name || 'Trader'}!**
 🚀 Your one-stop bot for trading memecoins with speed and precision! 💎
 
 👤 **User Profile**
@@ -30,15 +30,15 @@ ${formattedUserDetails}
 📈 Let the gains begin!
             `;
 
-            await ctx.reply(welcomeMessage, {
+            await ctx.editMessageText(welcomeMessage, {
                 parse_mode: 'Markdown',
                 ...keyboard
             });
         } catch (error) {
-            console.error('Error in start command:', error);
+            console.error('Error in start action:', error);
             await ctx.reply('An error occurred while processing your request.');
         }
     });
 };
 
-export default startCommand;
+export default startAction;

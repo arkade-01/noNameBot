@@ -4,7 +4,7 @@ import createNewSolanaWallet from "./createWallet";
 import getBalance from "./getUserbalance";
 
 async function getUser(telegram_id: string) {
-    await connectToDatabase();
+    // await connectToDatabase();
 
     // Check if the user already exists
     let user = await User.findOne({ telegram_id });
