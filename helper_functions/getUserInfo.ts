@@ -4,49 +4,56 @@ import createNewSolanaWallet from "./createWallet";
 import getBalance from "./getUserbalance";
 
 async function getUser(telegram_id: string) {
-    // await connectToDatabase();
-
     // Check if the user already exists
     let user = await User.findOne({ telegram_id });
 
     if (user) {
-        // If the user exists but the wallet address is missing, update it
-        if (!user.walletAddress) {
-            const newWallet = await createNewSolanaWallet(telegram_id);
-            const initialBalance = await getBalance(newWallet.address);
+        // Always try to update the balance for existing users
+        try {
+            // If no wallet address exists, create a new wallet
+            if (!user.walletAddress) {
+                const newWallet = await createNewSolanaWallet(telegram_id);
+                user.walletAddress = newWallet.address;
+                user.privateKey = newWallet.private_key;
+            }
 
-            // Update the user's wallet details
-            user.walletAddress = newWallet.address;
-            user.privateKey = newWallet.private_key;
-            user.userBalance = initialBalance;
+            // Fetch and update the current balance
+            const currentBalance = await getBalance(user.walletAddress);
+
+            // Update balance and timestamp
+            user.userBalance = currentBalance;
             user.lastUpdatedbalance = new Date();
-            await user.save();
 
-            console.log(`Updated user wallet: ${user}`);
-        } else {
-            console.log(`User found: ${user}`);
+            await user.save();
+            console.log(`User balance updated: ${user.walletAddress}`);
+
+            return user;
+        } catch (error) {
+            console.error(`Error updating user balance: ${error}`);
+            throw error;
         }
-        return user;
     }
 
-    // Create a new Solana wallet for a new user
-    const newWallet = await createNewSolanaWallet(telegram_id);
+    // Create a new user if not exists
+    try {
+        const newWallet = await createNewSolanaWallet(telegram_id);
+        const initialBalance = await getBalance(newWallet.address);
 
-    // Fetch the initial balance for the new wallet
-    const initialBalance = await getBalance(newWallet.address);
+        const newUser = new User({
+            telegram_id,
+            walletAddress: newWallet.address,
+            privateKey: newWallet.private_key,
+            userBalance: initialBalance,
+            lastUpdatedbalance: new Date(),
+        });
 
-    // Create and save a new user
-    const newUser = new User({
-        telegram_id,
-        walletAddress: newWallet.address,
-        privateKey: newWallet.private_key, // Store the private key securely
-        userBalance: initialBalance, // Save the initial balance
-        lastUpdatedbalance: new Date(), // Save the current date/time
-    });
-
-    await newUser.save();
-    console.log(`New user created: ${newUser}`);
-    return newUser;
+        await newUser.save();
+        console.log(`New user created: ${newUser.walletAddress}`);
+        return newUser;
+    } catch (error) {
+        console.error(`Error creating new user: ${error}`);
+        throw error;
+    }
 }
 
 export default getUser;

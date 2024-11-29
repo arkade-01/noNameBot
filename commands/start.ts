@@ -16,7 +16,8 @@ const startCommand = (bot: Telegraf<Context>) => {
 
             const keyboard = Markup.inlineKeyboard([
                 [Markup.button.callback('Wallet', 'wallets')],
-                [Markup.button.callback('Help', 'help')]
+                [Markup.button.callback('Help', 'help')],
+                // [Markup.button.callback('Trade', 'trade')],
             ]);
 
             const welcomeMessage = `
