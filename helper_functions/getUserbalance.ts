@@ -1,5 +1,5 @@
 import { PublicKey } from "@solana/web3.js";
-import { getSolanaConnection } from "./rpcConfig";
+import { getSolanaConnection } from "../utils/rpcConfig";
 
 async function getBalance(walletAddress: string) {
     const connection = getSolanaConnection()
