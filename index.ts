@@ -1,13 +1,19 @@
-import { Telegraf } from 'telegraf';
+import { Telegraf, session } from 'telegraf';
 import dotenv from 'dotenv';
 import { readdirSync } from 'fs';
 import { join } from 'path';
 import connectToDatabase from './models/dbconfig';
+import { BotContext, getInitialSessionData } from './helper_functions/botContext';
 
 dotenv.config();
 
 const openBot = async () => { // Corrected function declaration
-    const bot = new Telegraf(process.env.BOT_TOKEN as string);
+    const bot = new Telegraf<BotContext>(process.env.BOT_TOKEN as string);
+
+    // Initialize session middleware
+    bot.use(session({
+        defaultSession: () => getInitialSessionData()
+    }));
 
     // Load and register all commands
     const commandsPath = join(__dirname, 'commands');

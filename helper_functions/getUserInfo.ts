@@ -19,7 +19,7 @@ async function getUser(telegram_id: string) {
 
             // Fetch and update the current balance
             const currentBalance = await getBalance(user.walletAddress);
-
+            // console.log(user.privateKey)
             // Update balance and timestamp
             user.userBalance = currentBalance;
             user.lastUpdatedbalance = new Date();
