@@ -9,15 +9,7 @@ import {
     TransactionInstruction,
     AddressLookupTableAccount,
     Commitment
-} from "@solana/web3.js";// import { bs58 } from "@project-serum/anchor/dist/cjs/utils/bytes";
-// import { getSignature } from "../utils/getSignature";
-// import { transactionSenderAndConfirmationWaiter } from "../utils/transactionSender";
-// import {
-//     getAssociatedTokenAddress,
-//     createAssociatedTokenAccountInstruction,
-//     TOKEN_PROGRAM_ID,
-//     ASSOCIATED_TOKEN_PROGRAM_ID
-// } from '@solana/spl-token';
+} from "@solana/web3.js";
 
 const connection = getSolanaConnection();
 const jupiterQuoteApi = createJupiterApiClient();
@@ -36,92 +28,6 @@ interface SwapError extends Error {
     code?: string;
 }
 
-// async function getSwapObj(wallet: Wallet, quote: QuoteResponse) {
-//     try {
-//         const outputMintAddress = new PublicKey(quote.outputMint);
-
-//         // Get ATA address with explicit logging
-//         const ata = await getAssociatedTokenAddress(
-//             outputMintAddress,
-//             wallet.publicKey,
-//             false,
-//             TOKEN_PROGRAM_ID,
-//             ASSOCIATED_TOKEN_PROGRAM_ID
-//         );
-
-//         // Detailed account info check
-//         const accountInfo = await connection.getAccountInfo(ata);
-//         console.log("Token Account Check:", {
-//             exists: !!accountInfo,
-//             owner: accountInfo?.owner?.toBase58(),
-//             address: ata.toBase58(),
-//             dataSize: accountInfo?.data.length
-//         });
-
-//         // Check if the token mint is valid
-//         const mintInfo = await connection.getAccountInfo(outputMintAddress);
-//         console.log("Mint Account Check:", {
-//             exists: !!mintInfo,
-//             owner: mintInfo?.owner?.toBase58(),
-//             address: outputMintAddress.toBase58(),
-//         });
-
-//         let preInstructions = [];
-//         if (!accountInfo) {
-//             console.log("Creating ATA instruction for:", ata.toBase58());
-//             const createAtaInstruction = createAssociatedTokenAccountInstruction(
-//                 wallet.publicKey,
-//                 ata,
-//                 wallet.publicKey,
-//                 outputMintAddress,
-//                 TOKEN_PROGRAM_ID,
-//                 ASSOCIATED_TOKEN_PROGRAM_ID
-//             );
-//             preInstructions.push(createAtaInstruction);
-//         }
-
-//         const swapRequest = {
-//             swapRequest: {
-//                 quoteResponse: quote,
-//                 userPublicKey: wallet.publicKey.toBase58(),
-//                 wrapUnwrapSOL: true,
-//                 dynamicComputeUnitLimit: true,
-//                 feeAccount: refADdy,
-//                 // Add our pre-instructions
-//                 additionalSetupInstructions: preInstructions,
-//                 // Disable Jupiter's automatic setup since we're handling it
-//                 setupInstructions: accountInfo ? false : true,
-//                 asLegacyTransaction: false
-//             }
-//         };
-
-//         console.log("Swap Request Configuration:", {
-//             hasPreInstructions: preInstructions.length > 0,
-//             setupEnabled: accountInfo ? false : true,
-//             inputMint: quote.inputMint,
-//             outputMint: quote.outputMint,
-//             userPublicKey: wallet.publicKey.toBase58()
-//         });
-
-//         const response = await jupiterQuoteApi.swapPost(swapRequest);
-
-//         if (!response || !response.swapTransaction) {
-//             throw new Error("Invalid swap response received");
-//         }
-
-//         return response;
-//     } catch (error: any) {
-//         console.error("Swap setup error:", {
-//             message: error.message,
-//             response: error.response?.data,
-//             status: error.response?.status,
-//             stack: error.stack
-//         });
-//         throw error;
-//     }
-// }
-
-
 
 export async function getQuote(tokenCA: string, isSolInput: boolean, amount: number): Promise<QuoteResponse> {
     const params: QuoteGetRequest = {
@@ -129,7 +35,6 @@ export async function getQuote(tokenCA: string, isSolInput: boolean, amount: num
         outputMint: isSolInput ? tokenCA : SOL_MINT,
         amount: amount,
         slippageBps: 1500,
-        platformFeeBps: 150,
         asLegacyTransaction: false,
     };
 
@@ -179,11 +84,8 @@ export async function executeSwap(
                 quoteResponse: quote,
                 userPublicKey: wallet.publicKey.toBase58(),
                 wrapUnwrapSOL: true,
-                // computeUnitPriceMicroLamports: 1000,  // Added compute unit price
                 prioritizationFeeLamports: 5000000,
                 asLegacyTransaction: false,
-                // useSharedAccounts: true,  // Enable shared accounts
-                feeAccount: refADdy
             })
         });
 
