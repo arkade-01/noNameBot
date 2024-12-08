@@ -10,11 +10,12 @@ import {
     AddressLookupTableAccount,
     Commitment
 } from "@solana/web3.js";
+import { calculateHybridFee, createFeeTransferInstruction } from "./transfer";
 
 const connection = getSolanaConnection();
 const jupiterQuoteApi = createJupiterApiClient();
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
-const refADdy = 'D7qfnksBhCtVDLH7kS4JLiNHP5EwM3yfLBwWSW3z2sNc';
+const refADdy = new PublicKey('6m55KYNsM212aLTSpq8XX6h4G4nb4uR9a11Ekf8eZTWS');
 
 export interface SwapResult {
     success: boolean;
@@ -74,6 +75,23 @@ export async function executeSwap(
             userPublicKey: wallet.publicKey.toBase58()
         });
 
+        // Determine the SOL amount to receive or send
+        const solAmount = isSolInput ? amount : parseInt(quote.outAmount); // In lamports
+
+        // Calculate the hybrid fee based on the SOL amount
+        const feeAmount = calculateHybridFee(solAmount);
+        console.log(`Calculated fee: ${feeAmount} lamports`);
+
+        // Ensure the wallet has enough SOL to cover the fee
+        const walletBalance = await connection.getBalance(wallet.publicKey);
+        if (walletBalance < feeAmount) {
+            throw new Error("Insufficient SOL balance to cover the fee.");
+        }
+
+        // Create the fee transfer instruction
+        const feeTransferInstruction = createFeeTransferInstruction(wallet.publicKey, feeAmount, refADdy);
+
+        
         // Get swap instructions using Jupiter V6 API
         const swapInstructionsResponse = await fetch("https://quote-api.jup.ag/v6/swap-instructions", {
             method: 'POST',
@@ -161,7 +179,10 @@ export async function executeSwap(
         // Create instructions array with proper order
         const instructions: TransactionInstruction[] = [];
 
-        // Add compute budget instructions first
+        // Add fee transfer instruction first
+        instructions.push(feeTransferInstruction);
+
+        // Add compute budget instructions 
         if (computeBudgetInstructions?.length) {
             instructions.push(...computeBudgetInstructions.map(deserializeInstruction));
         }
@@ -227,17 +248,5 @@ export async function executeSwap(
             error: `${err.code || 'UNKNOWN'}: ${err.message || 'Unknown error occurred'}`,
             errorDetails: err
         };
-    }
-}
-
-export async function getQuoteInfo(
-    tokenCA: string,
-    isSolInput: boolean,
-    amount: number
-): Promise<QuoteResponse> {
-    try {
-        return await getQuote(tokenCA, isSolInput, amount);
-    } catch (error: any) {
-        throw new Error(`Failed to get quote: ${error.message}`);
     }
 }
