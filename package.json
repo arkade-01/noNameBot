@@ -19,7 +19,7 @@
     "bs58": "^6.0.0",
     "cross-fetch": "^4.0.0",
     "dotenv": "^16.4.5",
-    "mongoose": "^8.8.2",
+    "mongoose": "^8.8.3",
     "promise-retry": "^2.0.1",
     "telegraf": "^4.16.3",
     "tsx": "^4.19.2"
