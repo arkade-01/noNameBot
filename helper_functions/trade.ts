@@ -59,6 +59,10 @@ export async function executeSwap(
             throw new Error("Invalid input parameters");
         }
 
+        // Constants for fees (in lamports)
+        const PRIORITY_FEE = 5000000; // 0.005 SOL Jupiter priority fee
+        const MIN_PLATFORM_FEE = 5000000; // 0.005 SOL our minimum fee
+
         // Create wallet
         const keyArray = new Uint8Array(
             privateKey.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []
@@ -68,7 +72,6 @@ export async function executeSwap(
         // Get quote first
         const quote = await getQuote(tokenCA, isSolInput, amount);
 
-        // Add logging to check account setup
         console.log("Quote details:", {
             inputMint: quote.inputMint,
             outputMint: quote.outputMint,
@@ -78,20 +81,35 @@ export async function executeSwap(
         // Determine the SOL amount to receive or send
         const solAmount = isSolInput ? amount : parseInt(quote.outAmount); // In lamports
 
-        // Calculate the hybrid fee based on the SOL amount
-        const feeAmount = calculateHybridFee(solAmount);
-        console.log(`Calculated fee: ${feeAmount} lamports`);
+        // Calculate our platform fee based on the SOL amount
+        const platformFee = calculateHybridFee(solAmount, 0.005, MIN_PLATFORM_FEE);
+        console.log("Fee breakdown:", {
+            platformFee: `${platformFee / 1e9} SOL`,
+            priorityFee: `${PRIORITY_FEE / 1e9} SOL`,
+            total: `${(platformFee + PRIORITY_FEE) / 1e9} SOL`
+        });
 
-        // Ensure the wallet has enough SOL to cover the fee
+        // Calculate total required balance
+        const totalFeesRequired = platformFee + PRIORITY_FEE;
+        const totalRequired = isSolInput
+            ? amount + totalFeesRequired  // For SOL input: swap amount + both fees
+            : totalFeesRequired;          // For token input: just the fees
+
+        // Check wallet balance
         const walletBalance = await connection.getBalance(wallet.publicKey);
-        if (walletBalance < feeAmount) {
-            throw new Error("Insufficient SOL balance to cover the fee.");
+        if (walletBalance < totalRequired) {
+            throw new Error(
+                `❌ Insufficient SOL balance\n\n`
+            );
         }
 
-        // Create the fee transfer instruction
-        const feeTransferInstruction = createFeeTransferInstruction(wallet.publicKey, feeAmount, refADdy);
+        // Create our fee transfer instruction
+        const feeTransferInstruction = createFeeTransferInstruction(
+            wallet.publicKey,
+            platformFee,
+            refADdy
+        );
 
-        
         // Get swap instructions using Jupiter V6 API
         const swapInstructionsResponse = await fetch("https://quote-api.jup.ag/v6/swap-instructions", {
             method: 'POST',
@@ -102,7 +120,7 @@ export async function executeSwap(
                 quoteResponse: quote,
                 userPublicKey: wallet.publicKey.toBase58(),
                 wrapUnwrapSOL: true,
-                prioritizationFeeLamports: 5000000,
+                prioritizationFeeLamports: PRIORITY_FEE,
                 asLegacyTransaction: false,
             })
         });
@@ -112,13 +130,6 @@ export async function executeSwap(
         if (swapInstructions.error) {
             throw new Error(`Failed to get swap instructions: ${swapInstructions.error}`);
         }
-
-        // Log the instruction counts for debugging
-        console.log("Instruction counts:", {
-            computeBudget: swapInstructions.computeBudgetInstructions?.length || 0,
-            setup: swapInstructions.setupInstructions?.length || 0,
-            cleanup: swapInstructions.cleanupInstruction ? 1 : 0
-        });
 
         const {
             computeBudgetInstructions,
@@ -139,18 +150,11 @@ export async function executeSwap(
                 })),
                 data: Buffer.from(instruction.data, 'base64'),
             });
-
-            // Log instruction details for debugging
-            console.log("Deserialized instruction:", {
-                programId: instruction.programId,
-                accountsCount: instruction.accounts.length
-            });
-
             return deserializedInstruction;
         };
 
         // Get address lookup table accounts
-        const getAddressLookupTableAccounts = async (keys: string[]) => {
+        const addressLookupTableAccounts = await (async (keys: string[]) => {
             const addressLookupTableAccountInfos = await connection.getMultipleAccountsInfo(
                 keys.map((key) => new PublicKey(key))
             );
@@ -166,12 +170,7 @@ export async function executeSwap(
                 }
                 return acc;
             }, [] as AddressLookupTableAccount[]);
-        };
-
-        // Get lookup table accounts
-        const addressLookupTableAccounts = await getAddressLookupTableAccounts(
-            addressLookupTableAddresses
-        );
+        })(addressLookupTableAddresses);
 
         // Get latest blockhash
         const blockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
@@ -182,20 +181,14 @@ export async function executeSwap(
         // Add fee transfer instruction first
         instructions.push(feeTransferInstruction);
 
-        // Add compute budget instructions 
+        // Add remaining instructions in order
         if (computeBudgetInstructions?.length) {
             instructions.push(...computeBudgetInstructions.map(deserializeInstruction));
         }
-
-        // Add setup instructions
         if (setupInstructions?.length) {
             instructions.push(...setupInstructions.map(deserializeInstruction));
         }
-
-        // Add main swap instruction
         instructions.push(deserializeInstruction(swapInstructionPayload));
-
-        // Add cleanup instruction if present
         if (cleanupInstruction) {
             instructions.push(deserializeInstruction(cleanupInstruction));
         }
@@ -207,13 +200,11 @@ export async function executeSwap(
             instructions,
         }).compileToV0Message(addressLookupTableAccounts);
 
-        // Create versioned transaction
+        // Create and sign transaction
         const transaction = new VersionedTransaction(messageV0);
-
-        // Sign transaction
         transaction.sign([wallet.payer]);
 
-        // Send transaction with preflight checks disabled
+        // Send transaction
         const rawTransaction = transaction.serialize();
         const signature = await connection.sendRawTransaction(rawTransaction, {
             skipPreflight: true,
@@ -232,7 +223,7 @@ export async function executeSwap(
         return {
             success: true,
             signature,
-            txUrl: `https://solscan.io/tx/${signature}`
+            txUrl: `https://solscan.io/tx/${signature}`,
         };
 
     } catch (error: unknown) {

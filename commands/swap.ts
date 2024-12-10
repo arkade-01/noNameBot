@@ -1,13 +1,14 @@
-import { Telegraf } from 'telegraf';
+import { Telegraf, Markup } from 'telegraf';
 import { BotContext } from '../helper_functions/botContext';
-import { executeSwap, SwapResult } from '../helper_functions/trade';
+import { executeSwap, SwapResult, getQuote } from '../helper_functions/trade';
 import getUser from '../helper_functions/getUserInfo';
+import scanToken from '../helper_functions/tokenScanner';
+import { addTradeToUser } from '../helper_functions/positionManager';
 import { Keypair } from "@solana/web3.js";
 import { bs58 } from "@project-serum/anchor/dist/cjs/utils/bytes";
 
 const isValidSolanaPrivateKey = (key: string): boolean => {
     try {
-        // Attempt to decode the base58 private key
         bs58.decode(key);
         return true;
     } catch {
@@ -42,16 +43,51 @@ const swapAction = (bot: Telegraf<BotContext>) => {
 
                 await ctx.reply(`🔄 Processing buy order for ${amount} SOL...`);
 
+                // Get token info and quote
+                const tokenData = await scanToken(ctx.session.tokenCA);
+                if (!tokenData) {
+                    await ctx.reply('❌ Error: Unable to fetch token information.');
+                    return;
+                }
+
+                const lamports = amountInSol * 1e9;
+                const quote = await getQuote(ctx.session.tokenCA, true, lamports);
+
                 const result: SwapResult = await executeSwap(
                     ctx.session.tokenCA,
                     true,
-                    amountInSol * 1e9,
+                    lamports,
                     userDetails.privateKey
                 );
-                // console.log(result)
 
-                if (result.success) {
-                    await ctx.reply(`✅ Transaction successful!\n\nView transaction: ${result.txUrl}`);
+                if (result.success && result.signature) {
+                    // Store the trade
+                    await addTradeToUser(
+                        telegram_id,
+                        {
+                            address: ctx.session.tokenCA,
+                            tokenName: tokenData.tokenName,
+                            tokenSymbol: tokenData.tokenSymbol
+                        },
+                        quote,
+                        amountInSol
+                    );
+
+                    const successMessage = `✅ Trade Successful!\n\n` +
+                        `💰 Spent: ${amountInSol} SOL\n` +
+                        `🪙 Received: ${(Number(quote.outAmount) / 1e9).toFixed(2)} ${tokenData.tokenSymbol}\n` +
+                        `📈 Price Impact: ${(Number(quote.priceImpactPct) || 0).toFixed(2)}%\n` +
+                        `🔗 Transaction: [View on Solscan](${result.txUrl})`;
+
+                    const keyboard = Markup.inlineKeyboard([
+                        [Markup.button.callback('View Positions', 'positions')],
+                        [Markup.button.callback('Main Menu', 'start')]
+                    ]);
+
+                    await ctx.reply(successMessage, {
+                        parse_mode: 'Markdown',
+                        reply_markup: keyboard.reply_markup
+                    });
                 } else {
                     await ctx.reply(`❌ Transaction failed: ${result.error}`);
                 }
@@ -91,11 +127,6 @@ const swapAction = (bot: Telegraf<BotContext>) => {
             const telegram_id = ctx.from.id.toString();
             const userDetails = await getUser(telegram_id);
 
-            // if (!userDetails.privateKey || !isValidSolanaPrivateKey(userDetails.privateKey)) {
-            //     await ctx.reply('❌ Invalid Solana wallet configuration. Please check your wallet setup.');
-            //     return;
-            // }
-
             if (userDetails.userBalance < customAmount) {
                 await ctx.reply('❌ Insufficient balance. Please add more SOL to your wallet.');
                 return;
@@ -103,15 +134,52 @@ const swapAction = (bot: Telegraf<BotContext>) => {
 
             await ctx.reply(`🔄 Processing buy order for ${customAmount} SOL...`);
 
+            // Get token info and quote
+            const tokenData = await scanToken(ctx.session.tokenCA!);
+            if (!tokenData) {
+                await ctx.reply('❌ Error: Unable to fetch token information.');
+                return;
+            }
+
+            const lamports = customAmount * 1e9;
+            const quote = await getQuote(ctx.session.tokenCA!, true, lamports);
+
             const result: SwapResult = await executeSwap(
                 ctx.session.tokenCA!,
                 true,
-                customAmount * 1e9,
+                lamports,
                 userDetails.privateKey
             );
 
-            if (result.success) {
-                await ctx.reply(`✅ Transaction successful!\n\nView transaction: ${result.txUrl}`);
+            if (result.success && result.signature) {
+                // Store the trade
+                await addTradeToUser(
+                    telegram_id,
+                    {
+                        address: ctx.session.tokenCA!,
+                        tokenName: tokenData.tokenName,
+                        tokenSymbol: tokenData.tokenSymbol
+                    },
+                    quote,
+                    customAmount
+                );
+
+                const successMessage = `✅ Trade Successful!\n\n` +
+                    `💰 Spent: ${customAmount} SOL\n` +
+                    `🪙 Received: ${(Number(quote.outAmount) / 1e9).toFixed(2)} ${tokenData.tokenSymbol}\n` +
+                    `📈 Price Impact: ${(Number(quote.priceImpactPct) || 0).toFixed(2)}%\n` +
+                    `🔗 Transaction: [View on Solscan](${result.txUrl})`;
+
+                const keyboard = Markup.inlineKeyboard([
+                    [Markup.button.callback('View Positions', 'positions')],
+                    [Markup.button.callback('Main Menu', 'start')]
+                ]);
+
+                await ctx.reply(successMessage, {
+                    parse_mode: 'Markdown',
+                    link_preview_options: { is_disabled: true },
+                    reply_markup: keyboard.reply_markup
+                });
             } else {
                 await ctx.reply(`❌ Transaction failed: ${result.error}`);
             }
@@ -127,3 +195,4 @@ const swapAction = (bot: Telegraf<BotContext>) => {
 };
 
 export default swapAction;
+
