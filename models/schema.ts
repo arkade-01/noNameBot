@@ -11,6 +11,7 @@ export interface ITrade {
     currentPrice: number;
     solPnL: number;
     usdPnL: number;
+    entryMarketCap: number; // Add this field
     timestamp: Date;
 }
 
@@ -26,6 +27,8 @@ export interface IPosition {
     currentPrice: number;
     solPnL: number;
     usdPnL: number;
+    currentMarketCap: number;
+    entryMarketCap: number;
 }
 
 // Define Trade Schema
@@ -69,6 +72,11 @@ const tradeSchema = new Schema({
     timestamp: {
         type: Date,
         default: Date.now
+    },
+    entryMarketCap: {
+        type: Number,
+        required: true,
+        default: 0
     }
 });
 
@@ -112,6 +120,16 @@ const positionSchema = new Schema({
     },
     usdPnL: {
         type: Number,
+        default: 0
+    },
+    currentMarketCap: {
+        type: Number,
+        required: true,
+        default: 0
+    },
+    entryMarketCap: {
+        type: Number,
+        required: true,
         default: 0
     }
 });
@@ -181,7 +199,9 @@ userSchema.methods.getPositions = async function (): Promise<IPosition[]> {
             averageBuyPrice: 0,
             currentPrice: trade.currentPrice,
             solPnL: 0,
-            usdPnL: 0
+            usdPnL: 0,
+            entryMarketCap: trade.entryMarketCap,
+            currentMarketCap: 0  
         };
 
         current.totalTokens += trade.tokenAmount;

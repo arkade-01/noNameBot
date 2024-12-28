@@ -67,7 +67,11 @@ const swapAction = (bot: Telegraf<BotContext>) => {
                         {
                             address: ctx.session.tokenCA,
                             tokenName: tokenData.tokenName,
-                            tokenSymbol: tokenData.tokenSymbol
+                            tokenSymbol: tokenData.tokenSymbol,
+                            tokenInfo: {
+                                mktCap: tokenData.tokenInfo.mktCap,
+                                price: tokenData.tokenInfo.price
+                            }
                         },
                         quote,
                         amountInSol
@@ -158,7 +162,11 @@ const swapAction = (bot: Telegraf<BotContext>) => {
                     {
                         address: ctx.session.tokenCA!,
                         tokenName: tokenData.tokenName,
-                        tokenSymbol: tokenData.tokenSymbol
+                        tokenSymbol: tokenData.tokenSymbol,
+                        tokenInfo: {
+                            mktCap: tokenData.tokenInfo.mktCap,
+                            price: tokenData.tokenInfo.price
+                        }
                     },
                     quote,
                     customAmount

@@ -7,8 +7,9 @@ const base_url = process.env.BASE_URL2 as string;
 const api_key = process.env.API_KEY as string;
 
 interface TokenInfo {
-    price: string;
+    price: number;
     supplyAmount: number;
+    mktCap: number;
 }
 
 interface AuditRisk {
@@ -23,7 +24,6 @@ interface TokenData {
     deployTime: string;
     externals: string;
     liquidityList: object[];
-    marketCap: number;
     ownersList: object[];
     score: number;
     tokenImg: string;
@@ -42,12 +42,12 @@ interface FilteredTokenResponse {
     address: string;
     tokenName: string;
     tokenSymbol: string;
-    marketCap: number;
     score: number;
     auditRisk: AuditRisk;
     tokenInfo: {
-        price: string;
+        price: number;
         supplyAmount: number;
+        mktCap: number;
     };
 }
 
@@ -60,17 +60,16 @@ const scanToken = async (contractAddress: string): Promise<FilteredTokenResponse
             },
         });
 
-        const { address, tokenName, tokenSymbol, marketCap, auditRisk, score } = res.data.tokenData;
-        const { price, supplyAmount } = res.data.tokenInfo;
+        const { address, tokenName, tokenSymbol, auditRisk, score } = res.data.tokenData;
+        const { price, supplyAmount, mktCap } = res.data.tokenInfo;
 
         const filteredResponse: FilteredTokenResponse = {
             address,
             tokenName,
             tokenSymbol,
-            marketCap,
             score,
             auditRisk,
-            tokenInfo: { price, supplyAmount }, // Include tokenInfo with price details
+            tokenInfo: { price, supplyAmount: Math.round(supplyAmount), mktCap: Math.round(mktCap) }, // Include tokenInfo with price details
         };
 
         console.log('Filtered Token Response:', filteredResponse);

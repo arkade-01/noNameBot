@@ -1,6 +1,7 @@
 import User, { ITrade, IUser } from '../models/schema';
-import { getQuote } from '../helper_functions/trade';
 import { QuoteResponse } from "@jup-ag/api";
+import scanToken from './tokenScanner';
+import { fetchSolanaPrice } from './fetchSolprice';
 
 export interface IPosition {
     tokenAddress: string;
@@ -13,33 +14,35 @@ export interface IPosition {
     currentPrice: number;
     solPnL: number;
     usdPnL: number;
+    entryMarketCap: number; // Add this field
+    currentMarketCap: number;
 }
 
 // Helper function to calculate price from Jupiter quote
-function calculatePriceFromQuote(quote: QuoteResponse): number {
-    // Convert amounts from string to numbers and handle decimals
-    const inAmount = Number(quote.inAmount) / 1e9;  // SOL decimals
-    const outAmount = Number(quote.outAmount) / 1e9; // Assuming token decimals = 9
-    return inAmount / outAmount;
+async function calculatePriceFromScan(tokenAddress: string): Promise<number> {
+    const getPrice = await scanToken(tokenAddress);
+    return Number(getPrice?.tokenInfo.price || 0);
 }
+
 
 export async function updatePositionsPnL(telegram_id: string): Promise<IPosition[]> {
     try {
         const positions = await getUserPositions(telegram_id);
 
         for (const position of positions) {
-            // Get current price quote for 1 SOL worth of tokens
-            const currentQuote = await getQuote(position.tokenAddress, true, 1e9);
-            const currentPrice = calculatePriceFromQuote(currentQuote);
+            // Get current token data including market cap
+            const tokenData = await scanToken(position.tokenAddress);
+            const currentPrice = Number(tokenData?.tokenInfo.price || 0);
 
             position.currentPrice = currentPrice;
+            position.currentMarketCap = Math.round(tokenData?.tokenInfo.mktCap || 0);
 
             // Calculate PnL
-            const solValueAtCurrentPrice = position.totalTokens * currentPrice;
+            const solValueAtCurrentPrice = position.totalTokens * Number(currentPrice);
             position.solPnL = solValueAtCurrentPrice - position.totalSolSpent;
 
             // TODO: Replace with actual SOL price from your price feed
-            const solPrice = 60; // Example SOL price in USD
+            const solPrice = await fetchSolanaPrice(); // Example SOL price in USD
             position.usdPnL = position.solPnL * solPrice;
         }
 
@@ -56,6 +59,10 @@ export async function addTradeToUser(
         address: string;
         tokenName: string;
         tokenSymbol: string;
+        tokenInfo: {
+            mktCap: number;
+            price: number;
+        }
     },
     quote: QuoteResponse,
     solAmount: number
@@ -66,19 +73,20 @@ export async function addTradeToUser(
             throw new Error('User not found');
         }
 
-        const price = calculatePriceFromQuote(quote);
-        const tokenAmount = Number(quote.outAmount) / 1e9; // Convert to proper decimal places
+        const price = await calculatePriceFromScan(tokenData.address);
+        const tokenAmount = Number(quote.outAmount); // Convert to proper decimal places
 
         const trade: ITrade = {
             tokenAddress: tokenData.address,
             tokenName: tokenData.tokenName,
             tokenSymbol: tokenData.tokenSymbol,
-            buyPrice: price,
+            buyPrice: tokenData.tokenInfo.price,
             tokenAmount: tokenAmount,
             solSpent: solAmount,
             currentPrice: price,
             solPnL: 0,
             usdPnL: 0,
+            entryMarketCap: Math.round(tokenData.tokenInfo?.mktCap || 0), // Add entry market cap
             timestamp: new Date()
         };
 
@@ -111,7 +119,9 @@ export async function getUserPositions(telegram_id: string): Promise<IPosition[]
                 averageBuyPrice: 0,
                 currentPrice: trade.currentPrice,
                 solPnL: 0,
-                usdPnL: 0
+                usdPnL: 0,
+                entryMarketCap: trade.entryMarketCap, 
+                currentMarketCap: 0 
             };
 
             current.totalTokens += trade.tokenAmount;

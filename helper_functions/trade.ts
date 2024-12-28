@@ -241,3 +241,19 @@ export async function executeSwap(
         };
     }
 }
+
+// const testQuote = async () => {
+//     try {
+//         const quote = await getQuote(
+//             'ATEWnH7CyLUyDAYVnUS4jxBi243SWUnBmmpRf3QRpump', // token address
+//             true,  // isSolInput
+//             10000000 // amount in lamports (0.01 SOL)
+//         );
+//         console.log('Quote result:', JSON.stringify(quote, null, 2));
+//     } catch (error) {
+//         console.error('Error getting quote:', error);
+//     }
+// };
+
+// // Run the test
+// testQuote();
