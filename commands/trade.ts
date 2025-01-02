@@ -33,7 +33,7 @@ const formatTokenResponse = async (data: any, quote: any, telegram_id: string, a
         `✅ LP Status: ${data.auditRisk.lpBurned ? 'Burned' : 'Not Burned'}`;
 
     if (quote && !quote.error) {
-        const tokensReceived = escapeMarkdown((Number(quote.outAmount) / 1e9).toString());
+        const tokensReceived = escapeMarkdown((Number(quote.outAmount) / 1e6).toString());
         const slippage = escapeMarkdown((quote.slippageBps / 100).toString());
         const impact = escapeMarkdown((Number(quote.priceImpactPct) || 0).toFixed(2));
         const balance = escapeMarkdown(userDetails.userBalance.toFixed(4));
