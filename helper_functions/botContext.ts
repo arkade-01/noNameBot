@@ -5,6 +5,7 @@ interface SessionData {
     tokenCA?: string;
     amount?: number;
     awaitingCustomAmount?: boolean;
+    awaitingCustomSellAmount?: boolean
 }
 
 export interface BotContext extends Context {
