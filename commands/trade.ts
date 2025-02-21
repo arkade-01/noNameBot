@@ -3,6 +3,7 @@ import { BotContext } from '../helper_functions/botContext';
 import scanToken from '../helper_functions/tokenScanner';
 import { getQuote } from '../helper_functions/trade';
 import getUser from '../helper_functions/getUserInfo';
+import getTokenDecimals from '../helper_functions/tokenmetaData';
 
 const escapeMarkdown = (text: any): string => {
     if (text == null) return '';
@@ -33,8 +34,8 @@ const formatTokenResponse = async (data: any, quote: any, telegram_id: string, a
         `✅ LP Status: ${data.auditRisk.lpBurned ? 'Burned' : 'Not Burned'}`;
 
     if (quote && !quote.error) {
-        const tokensReceived = escapeMarkdown((Number(quote.outAmount) / 1e9).toString());
-        const slippage = escapeMarkdown((quote.slippageBps / 100).toString());
+        const decimals = await getTokenDecimals(data.address);
+        const tokensReceived = escapeMarkdown((Number(quote.outAmount) / Math.pow(10, decimals)).toString());        const slippage = escapeMarkdown((quote.slippageBps / 100).toString());
         const impact = escapeMarkdown((Number(quote.priceImpactPct) || 0).toFixed(2));
         const balance = escapeMarkdown(userDetails.userBalance.toFixed(4));
         const solAmount = escapeMarkdown(amount.toString());
