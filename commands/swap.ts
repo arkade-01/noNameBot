@@ -31,10 +31,10 @@ const swapAction = (bot: Telegraf<BotContext>) => {
                 const telegram_id = ctx.from.id.toString();
                 const userDetails = await getUser(telegram_id);
 
-                if (!userDetails.privateKey || !isValidSolanaPrivateKey(userDetails.privateKey)) {
-                    await ctx.reply('❌ Invalid Solana wallet configuration. Please check your wallet setup.');
-                    return;
-                }
+                // if (!userDetails.privateKey || !isValidSolanaPrivateKey(userDetails.privateKey)) {
+                //     await ctx.reply('❌ Invalid Solana wallet configuration. Please check your wallet setup.');
+                //     return;
+                // }
 
                 const amountInSol = parseFloat(amount);
 

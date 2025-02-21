@@ -15,7 +15,7 @@ import { calculateHybridFee, createFeeTransferInstruction } from "./transfer";
 const connection = getSolanaConnection();
 const jupiterQuoteApi = createJupiterApiClient();
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
-const refADdy = new PublicKey('6m55KYNsM212aLTSpq8XX6h4G4nb4uR9a11Ekf8eZTWS');
+const refADdy = new PublicKey('F4YUKtErW6VZVpNLfkAPtTMQcNPvMtshsgamGZmTotCx');
 
 export interface SwapResult {
     success: boolean;

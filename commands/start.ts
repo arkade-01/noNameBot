@@ -1,10 +1,9 @@
 import { Telegraf, Context, Markup } from 'telegraf';
 import getUser from '../helper_functions/getUserInfo';
 
-// Helper function to escape special characters for MarkdownV2
+// Helper function to escape special characters for MarkdownV2 (except formatting chars)
 const escapeMarkdown = (text: string): string => {
-    // Characters that need to be escaped in MarkdownV2:
-    // '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'
+    // First, escape characters that need escaping
     return text.replace(/[_*[\]()~`>#+=|{}.!]/g, '\\$&');
 };
 
@@ -16,15 +15,27 @@ const startCommand = (bot: Telegraf<Context>) => {
 
             // Format the balance with proper decimal places
             const formattedBalance = userDetails.userBalance.toFixed(4);
-            const formattedDate = userDetails.lastUpdatedbalance?.toLocaleString() || 'Never';
+            // Escape each individual part before formatting
+            const escapedBalance = escapeMarkdown(formattedBalance);
+            const escapedDate = escapeMarkdown(userDetails.lastUpdatedbalance?.toLocaleString() || 'Never');
+            const escapedWalletAddress = escapeMarkdown(userDetails.walletAddress);
+            const escapedName = escapeMarkdown(ctx.from?.first_name || 'Trader');
 
-            // Create user details section with proper escaping
-            const formattedUserDetails = [
-                `📜 *Wallet Address:* \`${escapeMarkdown(userDetails.walletAddress)}\``,
-                `💰 *Balance:* ${escapeMarkdown(formattedBalance)} SOL`,
-                `⏳ *Last Updated:* ${escapeMarkdown(formattedDate)}`
+            // Build message with pre-escaped individual parts and proper line spacing
+            const welcomeMessage = [
+                `🤖 *Welcome to BOLT TRADING BOT, ${escapedName}\\!*`,
+                ``,
+                `🚀 Ready to enhance your trading with market insights, early token alerts, and automated tools\\.`,
+                ``,
+                `👤 *User Profile*`,
+                `📜 *Wallet Address:* \`${escapedWalletAddress}\``,
+                `💰 *Balance:* ${escapedBalance} SOL`,
+                `⏳ *Last Updated:* ${escapedDate}`,
+                ``,
+                `🌟 Type /help to get started with our features\\.`,
+                `📈 Successful trading awaits\\!`
             ].join('\n');
-
+            
             // Create keyboard
             const keyboard = Markup.inlineKeyboard([
                 [
@@ -37,27 +48,15 @@ const startCommand = (bot: Telegraf<Context>) => {
                 ],
             ]);
 
-            // Create welcome message with proper escaping
-            const welcomeMessage = [
-                `🤖 *Welcome to NoNameCabal, ${escapeMarkdown(ctx.from?.first_name || 'Trader')}\\!*`,
-                `🚀 Your one\\-stop bot for trading memecoins with speed and precision\\! 💎`,
-                '',
-                `👤 *User Profile*`,
-                formattedUserDetails,
-                '',
-                `🌟 Use /help to learn how to get started\\.`,
-                `📈 Let the gains begin\\!`,
-                '',
-                `Built with 💻 by @arkade\\_01`
-            ].join('\n');
-
             await ctx.reply(welcomeMessage, {
                 parse_mode: 'MarkdownV2',
                 ...keyboard
             });
         } catch (error) {
             console.error('Error in start command:', error);
-            await ctx.reply('An error occurred while processing your request\\.');
+            await ctx.reply('An error occurred while processing your request\\.', {
+                parse_mode: 'MarkdownV2'
+            });
         }
     });
 };
