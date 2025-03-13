@@ -11,8 +11,8 @@ import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.j
  */
 export function calculateHybridFee(
     amountInLamports: number,
-    percentageFee: number = 0.005,     // Default to 0.5%
-    minimumFeeSol: number = 5000000    // Default to 0.002 SOL in lamports
+    percentageFee: number = 0,     // Default to 0.5%
+    minimumFeeSol: number = 0    // Default to 0.002 SOL in lamports
 ): number {
     // Type and value checks
     if (isNaN(amountInLamports) || amountInLamports <= 0) {
