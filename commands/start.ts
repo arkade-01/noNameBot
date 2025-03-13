@@ -1,4 +1,5 @@
-import { Telegraf, Context, Markup } from 'telegraf';
+import { Telegraf, Markup } from 'telegraf';
+import { BotContext } from '../helper_functions/botContext';
 import getUser from '../helper_functions/getUserInfo';
 
 // Helper function to escape special characters for MarkdownV2
@@ -7,7 +8,7 @@ const escapeMarkdown = (text: string): string => {
 };
 
 // Function to generate the welcome message and keyboard
-const generateWelcomeMessage = async (ctx: Context, isReturn = false) => {
+const generateWelcomeMessage = async (ctx: BotContext, isReturn = false) => {
     const telegram_id = ctx.from?.id.toString() || '';
     const userDetails = await getUser(telegram_id);
 
@@ -26,10 +27,12 @@ const generateWelcomeMessage = async (ctx: Context, isReturn = false) => {
     const keyboard = Markup.inlineKeyboard([
         [
             Markup.button.callback('Trade', 'trade'),
+            Markup.button.callback('CopyTrading', 'copy'),
             Markup.button.callback('Positions', 'positions')
         ],
         [
             Markup.button.callback('Wallet', 'wallets'),
+            Markup.button.callback('LeaderBoard', 'leaderboard'),
             Markup.button.callback('Help', 'help')
         ],
     ]);
@@ -51,10 +54,11 @@ const generateWelcomeMessage = async (ctx: Context, isReturn = false) => {
     return { welcomeMessage, keyboard };
 };
 
-const startCommand = (bot: Telegraf<Context>) => {
+const startCommand = (bot: Telegraf<BotContext>) => {
     // Regular /start command handler
     bot.start(async (ctx) => {
         try {
+            console.log('Start command triggered');
             const { welcomeMessage, keyboard } = await generateWelcomeMessage(ctx);
             await ctx.reply(welcomeMessage, {
                 parse_mode: 'MarkdownV2',
@@ -69,6 +73,7 @@ const startCommand = (bot: Telegraf<Context>) => {
     // Action handler for a 'start' callback button
     bot.action('start', async (ctx) => {
         try {
+            console.log('Start action triggered');
             await ctx.answerCbQuery(); // Acknowledge the button click
             const { welcomeMessage, keyboard } = await generateWelcomeMessage(ctx, true);
 
