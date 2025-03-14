@@ -10,12 +10,16 @@ import {
     AddressLookupTableAccount,
     Commitment
 } from "@solana/web3.js";
-import { calculateHybridFee, createFeeTransferInstruction } from "./transfer";
+import { createFeeTransferInstruction, FIXED_FEE_LAMPORTS } from "./transfer";
+import dotenv from "dotenv"
+
+dotenv.config()
 
 const connection = getSolanaConnection();
 const jupiterQuoteApi = createJupiterApiClient();
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
-const refADdy = new PublicKey('6m55KYNsM212aLTSpq8XX6h4G4nb4uR9a11Ekf8eZTWS');
+const addy = process.env.FEE_ADDY as string
+const refADdy = new PublicKey(addy);
 
 export interface SwapResult {
     success: boolean;
@@ -61,7 +65,8 @@ export async function executeSwap(
 
         // Constants for fees (in lamports)
         const PRIORITY_FEE = 5000000; // 0.005 SOL Jupiter priority fee
-        const MIN_PLATFORM_FEE = 5000000; // 0.005 SOL our minimum fee
+        // Using fixed platform fee of 0.007925 SOL
+        const platformFee = FIXED_FEE_LAMPORTS; // 7,925,000 lamports
 
         // Create wallet
         const keyArray = new Uint8Array(
@@ -81,8 +86,6 @@ export async function executeSwap(
         // Determine the SOL amount to receive or send
         const solAmount = isSolInput ? amount : parseInt(quote.outAmount); // In lamports
 
-        // Calculate our platform fee based on the SOL amount
-        const platformFee = calculateHybridFee(solAmount, 0.005, MIN_PLATFORM_FEE);
         console.log("Fee breakdown:", {
             platformFee: `${platformFee / 1e9} SOL`,
             priorityFee: `${PRIORITY_FEE / 1e9} SOL`,
@@ -106,7 +109,6 @@ export async function executeSwap(
         // Create our fee transfer instruction
         const feeTransferInstruction = createFeeTransferInstruction(
             wallet.publicKey,
-            platformFee,
             refADdy
         );
 
@@ -241,19 +243,3 @@ export async function executeSwap(
         };
     }
 }
-
-// const testQuote = async () => {
-//     try {
-//         const quote = await getQuote(
-//             'ATEWnH7CyLUyDAYVnUS4jxBi243SWUnBmmpRf3QRpump', // token address
-//             true,  // isSolInput
-//             10000000 // amount in lamports (0.01 SOL)
-//         );
-//         console.log('Quote result:', JSON.stringify(quote, null, 2));
-//     } catch (error) {
-//         console.error('Error getting quote:', error);
-//     }
-// };
-
-// // Run the test
-// testQuote();

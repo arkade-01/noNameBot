@@ -96,7 +96,7 @@ const userSchema = new Schema({
     timestamps: true
 });
 
-// Add method to save new trade
+// Fix for addTrade method in userSchema
 userSchema.methods.addTrade = async function (trade: ITrade): Promise<void> {
     this.trades.push(trade);
 
@@ -115,16 +115,20 @@ userSchema.methods.addTrade = async function (trade: ITrade): Promise<void> {
         position.trades.push(trade);
         position.lastPriceUpdate = new Date(); // Update timestamp
 
+        // Fix: Check for zero tokens to prevent Infinity
         if (position.totalTokens > 0) {
-            position.averageBuyPrice = Math.abs(position.totalSolSpent / position.totalTokens);
-            const solValueAtCurrentPrice = position.totalTokens * position.currentPrice;
-            position.solPnL = solValueAtCurrentPrice - position.totalSolSpent;
+            position.averageBuyPrice = position.totalSolSpent / position.totalTokens;
+        } else {
+            position.averageBuyPrice = 0; // Set to 0 instead of Infinity
+        }
 
-            // Calculate USD values if possible
-            if (trade.usdSpent) {
-                position.currentUsdValue = solValueAtCurrentPrice * (trade.usdSpent / trade.solSpent);
-                position.usdPnL = position.currentUsdValue - (position.totalUsdSpent || 0);
-            }
+        const solValueAtCurrentPrice = position.totalTokens * position.currentPrice;
+        position.solPnL = solValueAtCurrentPrice - position.totalSolSpent;
+
+        // Calculate USD values if possible
+        if (trade.usdSpent) {
+            position.currentUsdValue = solValueAtCurrentPrice * (trade.usdSpent / trade.solSpent);
+            position.usdPnL = position.currentUsdValue - (position.totalUsdSpent || 0);
         }
     } else if (trade.tokenAmount > 0) {
         // Create new position with lastPriceUpdate and USD fields
@@ -136,7 +140,7 @@ userSchema.methods.addTrade = async function (trade: ITrade): Promise<void> {
             totalSolSpent: trade.solSpent,
             totalUsdSpent: trade.usdSpent, // Add USD spent if available
             trades: [trade],
-            averageBuyPrice: trade.buyPrice,
+            averageBuyPrice: trade.tokenAmount > 0 ? trade.solSpent / trade.tokenAmount : 0, // Fix: Safe division
             currentPrice: trade.currentPrice,
             solPnL: 0,
             usdPnL: 0,
@@ -151,7 +155,7 @@ userSchema.methods.addTrade = async function (trade: ITrade): Promise<void> {
     await this.save();
 };
 
-// Add method to get positions
+// Fix for getPositions method
 userSchema.methods.getPositions = async function (): Promise<IPosition[]> {
     const positions = new Map<string, IPosition>();
 
@@ -184,7 +188,14 @@ userSchema.methods.getPositions = async function (): Promise<IPosition[]> {
         }
 
         current.trades.push(trade);
-        current.averageBuyPrice = current.totalSolSpent / current.totalTokens;
+
+        // Fix: Safe calculation of average buy price
+        if (current.totalTokens > 0) {
+            current.averageBuyPrice = current.totalSolSpent / current.totalTokens;
+        } else {
+            current.averageBuyPrice = 0; // Set to 0 instead of Infinity
+        }
+
         current.currentPrice = trade.currentPrice;
 
         positions.set(key, current);

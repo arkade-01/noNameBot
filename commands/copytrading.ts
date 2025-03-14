@@ -107,7 +107,7 @@ const getCopyTradingMenu = () => {
       [{ text: "🔍 Find Top Traders to Copy", callback_data: "find_top_traders" }],
       [{ text: "📋 Enter Wallet Address to Copy", callback_data: "enter_wallet_address" }],
       [{ text: "📊 View Tracked Wallets", callback_data: "view_tracked_wallets" }],
-      [{ text: "« Back to Main Menu", callback_data: "start" }]
+      [{ text: "« Back to Main Menu", callback_data: "return_to_main" }]
     ]
   };
 };
