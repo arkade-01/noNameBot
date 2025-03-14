@@ -200,6 +200,9 @@ export class WalletTracker extends EventEmitter {
   private lastSeenTxHash: string | null = null;
   private knownTokenAddresses: Set<string> = new Set();
   private debug: boolean = false;
+  private initializationTime: Date;
+  private processedTxHashes: Set<string> = new Set();
+
 
   constructor(walletAddress: string, apiKey: string, pollingIntervalMs: number = 30000, debug: boolean = false) {
     super();
@@ -207,6 +210,7 @@ export class WalletTracker extends EventEmitter {
     this.apiClient = new BirdEyeClient(apiKey);
     this.pollingIntervalMs = pollingIntervalMs;
     this.debug = debug;
+    this.initializationTime = new Date(); // Track when tracking begins
 
     // Configure client for optimal reliability
     this.apiClient.configure({
@@ -217,12 +221,20 @@ export class WalletTracker extends EventEmitter {
   }
 
   
-
   public startTracking(): void {
     if (this.isTracking) {
       console.log("Tracking already in progress");
       return;
     }
+
+    // Clear the known tokens list and processed transaction hashes
+    this.knownTokenAddresses.clear();
+    this.processedTxHashes.clear();
+
+    // Set initialization time to be 60 seconds in the past
+    // This helps with potential API and clock synchronization issues
+    this.initializationTime = new Date(Date.now() - 60000); // 1 minute in the past
+    console.log(`Setting initialization time to ${this.initializationTime.toISOString()}`);
 
     this.isTracking = true;
     console.log(`Starting to track wallet ${this.walletAddress}`);
@@ -230,14 +242,17 @@ export class WalletTracker extends EventEmitter {
     // Immediately run first check
     this.checkForNewTransactions();
 
+    // Reduce polling interval for faster notifications (adjust as needed)
+    // Consider the API rate limits when setting this
+    const pollingInterval = Math.min(this.pollingIntervalMs, 15000); // Max of 15 seconds or configured value
+
     // Set up regular polling
     this.pollingTimer = setInterval(() => {
       this.checkForNewTransactions();
-    }, this.pollingIntervalMs);
+    }, pollingInterval);
 
     this.emit('tracking:started', { walletAddress: this.walletAddress });
   }
-
   public stopTracking(): void {
     if (!this.isTracking) {
       return;
@@ -250,21 +265,27 @@ export class WalletTracker extends EventEmitter {
 
     this.isTracking = false;
     console.log(`Stopped tracking wallet ${this.walletAddress}`);
+
+    // Clear processed transaction hashes when stopping
+    this.processedTxHashes.clear();
+
     this.emit('tracking:stopped', { walletAddress: this.walletAddress });
   }
 
+  /**
+   * Modified section of the checkForNewTransactions method
+   * This change will detect all token trades, even for previously seen tokens
+   */
   private async checkForNewTransactions(): Promise<void> {
     try {
       console.log(`Checking for new transactions for wallet ${this.walletAddress}...`);
 
-      // Now properly typed
+      // Get transactions
       const apiResponse = await this.apiClient.getWalletTransactions(this.walletAddress, 50);
-
       const transactions: Transaction[] = apiResponse.data.solana || [];
 
       if (this.debug) {
         console.log(`Fetched ${transactions.length} recent transactions for ${this.walletAddress}`);
-
         // Display the main actions for debugging
         const actions = new Set<string>();
         transactions.forEach(tx => actions.add(tx.mainAction));
@@ -274,47 +295,38 @@ export class WalletTracker extends EventEmitter {
       // Sort transactions by blockTime (newest first)
       transactions.sort((a, b) => new Date(b.blockTime).getTime() - new Date(a.blockTime).getTime());
 
-      // For debugging, log details of recent transactions
-      if (this.debug) {
-        const recentTxs = transactions.slice(0, 3);
-        for (const tx of recentTxs) {
-          console.log(`\nTransaction ${tx.txHash.substring(0, 8)}...`);
-          console.log(`  Action: ${tx.mainAction}`);
-          console.log(`  Time: ${tx.blockTime}`);
-          console.log(`  Status: ${tx.status ? 'Success' : 'Failed'}`);
-          console.log(`  From: ${tx.from}`);
-          console.log(`  To: ${tx.to}`);
-          console.log(`  Balance changes: ${tx.balanceChange ? tx.balanceChange.length : 0}`);
-
-          // Log token movements
-          if (tx.balanceChange && tx.balanceChange.length > 0) {
-            tx.balanceChange.forEach(change => {
-              if (!change.amount) return;
-              const direction = change.amount > 0 ? "IN" : "OUT";
-              const formattedAmount = change.amount / Math.pow(10, change.decimals || 9);
-              console.log(`    ${direction}: ${formattedAmount.toFixed(6)} ${change.symbol || 'Unknown'} (${change.address})`);
-            });
-          }
+      // Filter transactions that occurred before tracking started AND 
+      // transactions we've already processed
+      const newTransactions = transactions.filter(tx => {
+        // Skip transactions we've already processed
+        if (this.processedTxHashes.has(tx.txHash)) {
+          if (this.debug) console.log(`Skipping already processed tx ${tx.txHash.substring(0, 8)}`);
+          return false;
         }
-      }
 
-      // Find new transactions (those we haven't seen before)
-      const newTransactions = this.lastSeenTxHash
-        ? transactions.filter(tx => {
-          // Keep transactions until we hit the last seen one
-          if (tx.txHash === this.lastSeenTxHash) return false;
-          return true;
-        })
-        : transactions; // On first run, all are new
+        // Skip transactions that happened before tracking started
+        const txTime = new Date(tx.blockTime);
+        if (txTime <= this.initializationTime) {
+          if (this.debug) console.log(`Skipping historical tx ${tx.txHash.substring(0, 8)} from ${txTime.toISOString()}`);
+          return false;
+        }
+
+        return true;
+      });
 
       if (this.debug) {
-        console.log(`Found ${newTransactions.length} new transactions since last check`);
+        console.log(`Found ${newTransactions.length} new transactions after filtering`);
       }
 
-      // Update the last seen tx hash if we have transactions
-      if (transactions.length > 0) {
-        this.lastSeenTxHash = transactions[0].txHash;
+      // No need to process anything if no new transactions
+      if (newTransactions.length === 0) {
+        return;
       }
+
+      // Mark all new transactions as processed to prevent duplicates
+      newTransactions.forEach(tx => {
+        this.processedTxHashes.add(tx.txHash);
+      });
 
       // Process new transactions to find token purchases
       const newPurchases: TokenInfo[] = [];
@@ -353,17 +365,11 @@ export class WalletTracker extends EventEmitter {
           }
 
           for (const tokenChange of incomingTokens) {
-            // Skip already processed tokens
-            if (this.knownTokenAddresses.has(tokenChange.address)) {
-              if (this.debug) console.log(`  Skipping already processed token ${tokenChange.symbol}`);
-              continue;
-            }
-
             if (this.debug) {
-              console.log(`  New token purchase detected: ${tokenChange.symbol} (${tokenChange.address})`);
+              console.log(`Token purchase detected: ${tokenChange.symbol} (${tokenChange.address})`);
             }
 
-            // Found a new token purchase
+            // Found a token purchase
             newPurchases.push({
               address: tokenChange.address,
               symbol: tokenChange.symbol || "Unknown",
@@ -374,9 +380,6 @@ export class WalletTracker extends EventEmitter {
               purchaseTime: tx.blockTime,
               txHash: tx.txHash
             });
-
-            // Add to known tokens so we don't trigger on it again
-            this.knownTokenAddresses.add(tokenChange.address);
           }
         } else if (this.debug && tx.balanceChange.length > 0) {
           console.log(`No incoming tokens found in tx ${tx.txHash.substring(0, 8)}...`);
@@ -384,7 +387,7 @@ export class WalletTracker extends EventEmitter {
       }
 
       if (newPurchases.length > 0) {
-        console.log(`Detected ${newPurchases.length} new token purchases`);
+        console.log(`Detected ${newPurchases.length} token purchases after tracking began`);
 
         // Emit events for each new purchase
         newPurchases.forEach(token => {
@@ -402,8 +405,6 @@ export class WalletTracker extends EventEmitter {
           tokens: newPurchases,
           timestamp: new Date().toISOString()
         });
-      } else {
-        console.log(`No new purchases detected`);
       }
 
     } catch (error) {
@@ -415,6 +416,8 @@ export class WalletTracker extends EventEmitter {
       });
     }
   }
+
+
 
   public isActive(): boolean {
     return this.isTracking;
@@ -655,32 +658,31 @@ export class WalletTrackerService extends EventEmitter {
         // Get detailed transaction information to improve data quality
         const txDetails = await this.getDetailedTransactionInfo(tokenInfo.txHash, tokenInfo.address);
 
-        // Create a new trade object with the best available data
-        const trade: ITrade = {
+        // Create a trade object with the best available data, but DON'T save it to database
+        const tradeInfo: ITrade = {
           tokenAddress: tokenInfo.address,
           tokenName: tokenInfo.name,
           tokenSymbol: tokenInfo.symbol,
           buyPrice: txDetails.buyPrice || 0,
           tokenAmount: formattedAmount,
-          solSpent: txDetails.solSpent || 0.1, // Use transaction data or fallback
+          solSpent: txDetails.solSpent || 0.1,
           usdSpent: txDetails.usdValue || 0,
-          currentPrice: txDetails.buyPrice || 0, // Initially current price = buy price
-          solPnL: 0, // Will be calculated later as positions update
-          usdPnL: 0, // Will be calculated later as positions update
+          currentPrice: txDetails.buyPrice || 0,
+          solPnL: 0,
+          usdPnL: 0,
           entryMarketCap: txDetails.marketCap || 0,
           timestamp: new Date(tokenInfo.purchaseTime)
         };
 
-        // Add the trade to the user's trades
-        await user.addTrade(trade);
+        // IMPORTANT: We are NOT adding the trade to the user's account
+        // The line "await user.addTrade(trade);" is removed
 
-        console.log(`Added new trade for user ${telegramId}: ${formattedAmount} ${tokenInfo.symbol}`);
+        console.log(`Detected new token purchase for user ${telegramId}: ${formattedAmount} ${tokenInfo.symbol} (notification only)`);
 
         // Emit an event with the token info and trade details
-        // This will allow the telegram bot to respond appropriately
         this.emit('token:purchased', {
           ...tokenInfo,
-          trade: trade,
+          trade: tradeInfo,
           telegramId: telegramId
         });
 
@@ -688,7 +690,7 @@ export class WalletTrackerService extends EventEmitter {
         console.error(`Error getting detailed transaction info for ${tokenInfo.txHash}:`, error);
 
         // Create a minimal trade record if we can't get detailed info
-        const fallbackTrade: ITrade = {
+        const fallbackTradeInfo: ITrade = {
           tokenAddress: tokenInfo.address,
           tokenName: tokenInfo.name,
           tokenSymbol: tokenInfo.symbol,
@@ -702,19 +704,18 @@ export class WalletTrackerService extends EventEmitter {
           timestamp: new Date(tokenInfo.purchaseTime)
         };
 
-        // Add the fallback trade
-        await user.addTrade(fallbackTrade);
-        console.log(`Added fallback trade for user ${telegramId}: ${formattedAmount} ${tokenInfo.symbol}`);
+        // IMPORTANT: NOT saving to database
+        console.log(`Detected token purchase for user ${telegramId}: ${formattedAmount} ${tokenInfo.symbol} (notification only)`);
 
         // Still emit the event so the user gets notified
         this.emit('token:purchased', {
           ...tokenInfo,
-          telegramId: telegramId  // Add this line to include the Telegram ID
+          telegramId: telegramId
         });
       }
 
     } catch (error) {
-      console.error(`Error saving token purchase for user ${telegramId}:`, error);
+      console.error(`Error processing token purchase for user ${telegramId}:`, error);
       throw error;
     }
   }

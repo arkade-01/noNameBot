@@ -34,6 +34,13 @@ export async function updatePositionsPnL(telegram_id: string, forceUpdate: boole
                     position.totalTokens = actualTokenBalance;
                 }
 
+                // Fix: Safe calculation of average buy price
+                if (position.totalTokens > 0) {
+                    position.averageBuyPrice = position.totalSolSpent / position.totalTokens;
+                } else {
+                    position.averageBuyPrice = 0; // Set to 0 instead of Infinity
+                }
+
                 // Recalculate PnL
                 const solValueAtCurrentPrice = position.totalTokens * position.currentPrice;
                 position.solPnL = solValueAtCurrentPrice - position.totalSolSpent;
@@ -117,6 +124,19 @@ export async function addTradeToUser(
         };
 
         await user.addTrade(trade);
+
+        // Also ensure position has correct average buy price after trade is added
+        // This is a safety check in case user.addTrade doesn't handle it properly
+        const position = user.positions.find(p => p.tokenAddress === tokenData.address);
+        if (position) {
+            if (position.totalTokens > 0) {
+                position.averageBuyPrice = position.totalSolSpent / position.totalTokens;
+            } else {
+                position.averageBuyPrice = 0;
+            }
+            await user.save();
+        }
+
         return trade;
     } catch (error) {
         console.error('Error adding trade:', error);
@@ -146,6 +166,13 @@ export async function getUserPositions(telegram_id: string): Promise<IPosition[]
                         position.totalTokens = actualBalance;
                     }
 
+                    // Fix: Safe calculation of average buy price
+                    if (position.totalTokens > 0) {
+                        position.averageBuyPrice = position.totalSolSpent / position.totalTokens;
+                    } else {
+                        position.averageBuyPrice = 0; // Set to 0 instead of Infinity
+                    }
+
                     // Ensure USD fields are initialized
                     if (position.totalUsdSpent === undefined) {
                         position.totalUsdSpent = position.totalSolSpent * solPrice;
@@ -161,7 +188,16 @@ export async function getUserPositions(telegram_id: string): Promise<IPosition[]
         }
 
         // Fall back to manual calculation if getPositions is not available
-        return user.positions || [];
+        // Also make sure averageBuyPrice is calculated correctly
+        const positions = user.positions || [];
+        for (const position of positions) {
+            if (position.totalTokens > 0) {
+                position.averageBuyPrice = position.totalSolSpent / position.totalTokens;
+            } else {
+                position.averageBuyPrice = 0;
+            }
+        }
+        return positions;
     } catch (error) {
         console.error('Error getting user positions:', error);
         throw error;
@@ -196,6 +232,54 @@ export async function getPortfolioSummary(telegram_id: string) {
         });
     } catch (error) {
         console.error('Error getting portfolio summary:', error);
+        throw error;
+    }
+}
+
+// One-time fix for existing positions with Infinity in averageBuyPrice
+export async function fixPositionsAverageBuyPrice(telegram_id: string): Promise<IPosition[]> {
+    try {
+        const user = await User.findOne({ telegram_id });
+        if (!user) {
+            throw new Error('User not found');
+        }
+
+        // Get positions
+        let positions = user.positions || [];
+
+        // Fix each position
+        for (const position of positions) {
+            // Calculate proper average buy price
+            if (position.totalTokens > 0) {
+                position.averageBuyPrice = position.totalSolSpent / position.totalTokens;
+            } else {
+                position.averageBuyPrice = 0; // Set to 0 if no tokens to avoid Infinity
+            }
+
+            // Recalculate PnL with correct average buy price
+            const currentValue = position.totalTokens * position.currentPrice;
+
+            // Ensure PnL calculations are consistent with average buy price
+            position.solPnL = currentValue - position.totalSolSpent;
+
+            // Update USD values with current SOL price
+            const solPrice = await fetchSolanaPrice();
+            position.usdPnL = position.solPnL * solPrice;
+            position.currentUsdValue = currentValue * solPrice;
+
+            if (position.totalUsdSpent === undefined) {
+                position.totalUsdSpent = position.totalSolSpent * solPrice;
+            }
+        }
+
+        // Save updated positions
+        user.positions = positions;
+        await user.save();
+
+        console.log("Fixed average buy prices for all positions");
+        return positions;
+    } catch (error) {
+        console.error('Error fixing position average buy prices:', error);
         throw error;
     }
 }
