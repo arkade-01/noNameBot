@@ -39,16 +39,14 @@ const generateWelcomeMessage = async (ctx: BotContext, isReturn = false) => {
 
     // Create welcome message with proper escaping
     const welcomeMessage = [
-        `🤖 *${isReturn ? 'Welcome back to' : 'Welcome to'} NoNameCabal, ${escapeMarkdown(ctx.from?.first_name || 'Trader')}\\!*`,
+        `🤖 *${isReturn ? 'Welcome back to' : 'Welcome to'} Cop Trading Bot, ${escapeMarkdown(ctx.from?.first_name || 'Trader')}\\!*`,
         `🚀 Your one\\-stop bot for trading memecoins with speed and precision\\! 💎`,
         '',
         `👤 *User Profile*`,
         formattedUserDetails,
         '',
         `🌟 Use /help to learn how to get started\\.`,
-        `📈 Let the gains begin\\!`,
-        '',
-        `Built with 💻 by @arkade\\_01`
+        `📈 Let the gains begin\\!`
     ].join('\n');
 
     return { welcomeMessage, keyboard };
