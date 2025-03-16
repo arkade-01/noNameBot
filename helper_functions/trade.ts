@@ -99,12 +99,12 @@ export async function executeSwap(
             : totalFeesRequired;          // For token input: just the fees
 
         // Check wallet balance
-        const walletBalance = await connection.getBalance(wallet.publicKey);
-        if (walletBalance < totalRequired) {
-            throw new Error(
-                `❌ Insufficient SOL balance\n\n`
-            );
-        }
+        // const walletBalance = await connection.getBalance(wallet.publicKey);
+        // if (walletBalance < totalRequired) {
+        //     throw new Error(
+        //         `❌ Insufficient SOL balance\n\n`
+        //     );
+        // }
 
         // Create our fee transfer instruction
         const feeTransferInstruction = createFeeTransferInstruction(

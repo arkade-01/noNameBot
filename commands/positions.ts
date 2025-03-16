@@ -1,10 +1,13 @@
 import { BotContext } from "../helper_functions/botContext";
-import { Telegraf } from 'telegraf';
+import { Markup, Telegraf } from 'telegraf';
 import User, { IPosition } from '../models/schema';
 import { updatePositionsPnL, getPortfolioSummary } from '../helper_functions/positionManager';
 import { fetchSolanaPriceWithCache } from "../helper_functions/fetchSolprice";
 import getUser from "../helper_functions/getUserInfo";
 import { getTokenUIAmount } from "../helper_functions/getUserbalance";
+import scanToken from "../helper_functions/tokenScanner";
+import getTokenDecimals from "../helper_functions/tokenmetaData";
+import { getQuote, executeSwap } from "../helper_functions/trade";
 
 // Helper functions for formatting
 function formatNumber(num: number, decimals: number = 2): string {
@@ -105,6 +108,34 @@ const DEFAULT_PREFERENCES: UserPreferences = {
     selectedToken: null,
     sortBy: 'name'
 };
+
+// Create a user state map at the top of your positions.ts file
+const userSellStates = new Map<number, {
+    waitingForSellAmount: boolean;
+    tokenCA: string;
+    lastInteractionTime: number;
+}>();
+
+// Define timeout period (e.g., 5 minutes)
+const STATE_TIMEOUT_MS = 5 * 60 * 1000;
+
+// Check if state has timed out
+function hasSellStateTimedOut(userId: number): boolean {
+    const state = userSellStates.get(userId);
+    if (!state) return true;
+
+    const elapsed = Date.now() - state.lastInteractionTime;
+    return elapsed > STATE_TIMEOUT_MS;
+}
+
+// Update user interaction time
+function updateSellInteractionTime(userId: number): void {
+    const state = userSellStates.get(userId);
+    if (state) {
+        state.lastInteractionTime = Date.now();
+        userSellStates.set(userId, state);
+    }
+}
 
 // Function to get or create user preferences
 function getUserPreferences(telegram_id: string): UserPreferences {
@@ -506,7 +537,7 @@ Last Update: ${new Date().toLocaleTimeString()}`;
         }
     });
 
-    // Handlers for sell operations would go here
+    // Handlers for sell operations
     bot.action(/^sell_(25|50|75|100)$/, async (ctx) => {
         try {
             const percentStr = ctx.match[1];
@@ -523,43 +554,285 @@ Last Update: ${new Date().toLocaleTimeString()}`;
                 return;
             }
 
-            // Here you would implement the sell logic using percent and prefs.selectedToken
             await ctx.answerCbQuery(`Preparing to sell ${percent}% of tokens...`);
 
-            // For now, just tell the user this feature is coming soon
-            await ctx.reply(`📣 Sell feature will be implemented soon! You selected to sell ${percent}% of your ${prefs.selectedToken.substring(0, 6)}... tokens.`, {
-                parse_mode: 'HTML'
-            });
+            const userDetails = await getUser(telegram_id);
+            const positions = await updatePositionsPnL(telegram_id, false);
+
+            const tokenPosition = positions.find(p => p.tokenAddress === prefs.selectedToken);
+            if (!tokenPosition) {
+                await ctx.reply('❌ No position found for this token.');
+                return;
+            }
+
+            const sellPercentage = percent / 100;
+            const tokenAmount = tokenPosition.totalTokens * sellPercentage;
+
+            if (tokenAmount <= 0) {
+                await ctx.reply('❌ You have no tokens to sell.');
+                return;
+            }
+
+            await ctx.reply(`🔄 Processing sell order for ${tokenAmount.toFixed(6)} ${tokenPosition.tokenSymbol} (${percent}%)...`);
+
+            const tokenData = await scanToken(prefs.selectedToken);
+            if (!tokenData) {
+                await ctx.reply('❌ Error: Unable to fetch token information.');
+                return;
+            }
+
+            const tokenDecimals = await getTokenDecimals(prefs.selectedToken);
+            const tokenBaseUnits = Math.floor(tokenAmount * Math.pow(10, tokenDecimals));
+
+            // Get quote before executing the swap
+            const quote = await getQuote(prefs.selectedToken, false, tokenBaseUnits);
+
+            const result = await executeSwap(
+                prefs.selectedToken,
+                false,
+                tokenBaseUnits,
+                userDetails.privateKey
+            );
+
+            if (result.success && result.signature) {
+                const receivedSol = Number(quote.outAmount) / 1e9;
+
+                // Create a trade record for the sell
+                const trade = {
+                    tokenAddress: prefs.selectedToken,
+                    tokenName: tokenData.tokenName,
+                    tokenSymbol: tokenData.tokenSymbol,
+                    buyPrice: tokenPosition.currentPrice,
+                    tokenAmount: -tokenAmount,
+                    solSpent: -receivedSol,
+                    currentPrice: tokenData.tokenInfo.price,
+                    solPnL: 0, // Will be calculated by database
+                    usdPnL: 0, // Will be calculated by database
+                    entryMarketCap: tokenData.tokenInfo.mktCap,
+                    timestamp: new Date()
+                };
+
+                // Add the trade to user's record
+                await userDetails.addTrade(trade);
+
+                const successMessage = `✅ Sell Successful!\n\n` +
+                    `💰 Sold: ${tokenAmount.toFixed(6)} ${tokenData.tokenSymbol}\n` +
+                    `🪙 Received: ${receivedSol.toFixed(6)} SOL\n` +
+                    `📈 Price Impact: ${(Number(quote.priceImpactPct) || 0).toFixed(2)}%\n` +
+                    `🔗 Transaction: [View on Solscan](${result.txUrl})`;
+
+                const keyboard = Markup.inlineKeyboard([
+                    [Markup.button.callback('View Positions', 'positions')],
+                    [Markup.button.callback('Main Menu', 'start')]
+                ]);
+
+                await ctx.reply(successMessage, {
+                    parse_mode: 'Markdown',
+                    link_preview_options: { is_disabled: true },
+                    reply_markup: keyboard.reply_markup
+                });
+            } else {
+                await ctx.reply(`❌ Transaction failed: ${result.error}`);
+            }
 
         } catch (error) {
             console.error('Error handling sell operation:', error);
             await ctx.answerCbQuery('❌ Error processing sell request');
+            await ctx.reply('❌ Error processing your sell request. Please try again.');
         }
     });
 
+
     bot.action('sell_custom', async (ctx) => {
         try {
-            const telegram_id = ctx.from?.id.toString();
-            if (!telegram_id) {
+            const userId = ctx.from?.id;
+            if (!userId) {
                 throw new Error('Could not identify user');
             }
 
-            const prefs = getUserPreferences(telegram_id);
+            const prefs = getUserPreferences(userId.toString());
             if (!prefs.selectedToken) {
                 await ctx.answerCbQuery('❌ No token selected');
                 return;
             }
 
-            await ctx.answerCbQuery('Custom sell amount');
-            await ctx.reply('📝 Please enter the amount of tokens you want to sell:', {
-                parse_mode: 'HTML'
+            const positions = await updatePositionsPnL(userId.toString(), false);
+            const tokenPosition = positions.find(p => p.tokenAddress === prefs.selectedToken);
+            if (!tokenPosition) {
+                await ctx.reply('❌ No position found for this token.');
+                return;
+            }
+
+            if (tokenPosition.totalTokens <= 0) {
+                await ctx.reply('❌ You have no tokens to sell.');
+                return;
+            }
+
+            // Store state in the map instead of session
+            userSellStates.set(userId, {
+                waitingForSellAmount: true,
+                tokenCA: prefs.selectedToken,
+                lastInteractionTime: Date.now()
             });
 
-            // Here you would set up a scene or middleware to handle the user's response
+            // Create cancel button
+            const cancelKeyboard = Markup.inlineKeyboard([
+                [Markup.button.callback('❌ Cancel', 'cancel_sell')]
+            ]);
+
+            await ctx.answerCbQuery('Custom sell amount');
+            await ctx.reply(`📝 Please enter the amount of ${tokenPosition.tokenSymbol} you want to sell (max: ${tokenPosition.totalTokens.toFixed(6)}):`, {
+                parse_mode: 'HTML',
+                reply_markup: cancelKeyboard.reply_markup
+            });
 
         } catch (error) {
             console.error('Error setting up custom sell:', error);
             await ctx.answerCbQuery('❌ Error setting up custom sell');
+        }
+    });
+
+    // Add a cancel button handler
+    bot.action('cancel_sell', async (ctx) => {
+        const userId = ctx.from?.id;
+        if (userId) {
+            userSellStates.delete(userId);
+            await ctx.answerCbQuery('Sell operation cancelled');
+            await ctx.reply('❌ Sell operation cancelled.');
+
+            // Return to positions view
+            const telegram_id = userId.toString();
+            const prefs = getUserPreferences(telegram_id);
+            if (ctx.callbackQuery && 'message' in ctx.callbackQuery) {
+                await ctx.deleteMessage();
+            }
+            await displayPositions(ctx, telegram_id, prefs);
+        }
+    });
+
+    // Handle custom sell amount input
+    bot.on('text', async (ctx, next) => {
+        const userId = ctx.from.id;
+        const userState = userSellStates.get(userId);
+
+        // Check if state has timed out
+        if (hasSellStateTimedOut(userId)) {
+            // Clear the state and let other handlers process the message
+            userSellStates.delete(userId);
+            return next();
+        }
+
+        // Only process messages if user is in sell flow and waiting for amount
+        if (!userState?.waitingForSellAmount) {
+            return next(); // Pass to next handler (like /start)
+        }
+
+        console.log(`Processing text in sell flow for user ${userId}`);
+
+        // Update interaction time
+        updateSellInteractionTime(userId);
+
+        // Process the sell amount
+        const text = ctx.message.text;
+
+        // Try to parse as a number
+        const customAmount = parseFloat(text);
+
+        // If not a valid number, show error but stay in sell mode
+        if (isNaN(customAmount) || customAmount <= 0) {
+            await ctx.reply('❌ Please enter a valid number greater than 0.');
+            return;
+        }
+
+        try {
+            const telegram_id = userId.toString();
+            const positions = await updatePositionsPnL(telegram_id, false);
+            const tokenPosition = positions.find(p => p.tokenAddress === userState.tokenCA);
+
+            if (!tokenPosition) {
+                await ctx.reply('❌ No position found for this token.');
+                userSellStates.delete(userId);
+                return;
+            }
+
+            if (customAmount > tokenPosition.totalTokens) {
+                await ctx.reply(`❌ You only have ${tokenPosition.totalTokens.toFixed(6)} ${tokenPosition.tokenSymbol} available.`);
+                return;
+            }
+
+            await ctx.reply(`🔄 Processing sell order for ${customAmount.toFixed(6)} ${tokenPosition.tokenSymbol}...`);
+
+            const userDetails = await getUser(telegram_id);
+            const tokenData = await scanToken(userState.tokenCA);
+
+            if (!tokenData) {
+                await ctx.reply('❌ Error: Unable to fetch token information.');
+                userSellStates.delete(userId);
+                return;
+            }
+
+            const tokenDecimals = await getTokenDecimals(userState.tokenCA);
+            const tokenBaseUnits = Math.floor(customAmount * Math.pow(10, tokenDecimals));
+
+            // Get quote first
+            const quote = await getQuote(userState.tokenCA, false, tokenBaseUnits);
+
+            // Execute the swap
+            const result = await executeSwap(
+                userState.tokenCA,
+                false,
+                tokenBaseUnits,
+                userDetails.privateKey
+            );
+
+            if (result.success && result.signature) {
+                const receivedSol = Number(quote.outAmount) / 1e9;
+
+                // Create a trade record for the sell
+                const trade = {
+                    tokenAddress: userState.tokenCA,
+                    tokenName: tokenData.tokenName,
+                    tokenSymbol: tokenData.tokenSymbol,
+                    buyPrice: tokenPosition.currentPrice,
+                    tokenAmount: -customAmount,
+                    solSpent: -receivedSol,
+                    currentPrice: tokenData.tokenInfo.price,
+                    solPnL: 0, // Will be calculated by database
+                    usdPnL: 0, // Will be calculated by database
+                    entryMarketCap: tokenData.tokenInfo.mktCap,
+                    timestamp: new Date()
+                };
+
+                // Add the trade to user's record
+                await userDetails.addTrade(trade);
+
+                const successMessage = `✅ Sell Successful!\n\n` +
+                    `💰 Sold: ${customAmount.toFixed(6)} ${tokenData.tokenSymbol}\n` +
+                    `🪙 Received: ${receivedSol.toFixed(6)} SOL\n` +
+                    `📈 Price Impact: ${(Number(quote.priceImpactPct) || 0).toFixed(2)}%\n` +
+                    `🔗 Transaction: [View on Solscan](${result.txUrl})`;
+
+                const keyboard = Markup.inlineKeyboard([
+                    [Markup.button.callback('View Positions', 'positions')],
+                    [Markup.button.callback('Main Menu', 'start')]
+                ]);
+
+                await ctx.reply(successMessage, {
+                    parse_mode: 'Markdown',
+                    link_preview_options: { is_disabled: true },
+                    reply_markup: keyboard.reply_markup
+                });
+
+                // Clear the state
+                userSellStates.delete(userId);
+            } else {
+                await ctx.reply(`❌ Transaction failed: ${result.error}`);
+                userSellStates.delete(userId);
+            }
+        } catch (error) {
+            console.error('Error processing custom sell amount:', error);
+            await ctx.reply('❌ Error processing sell order. Please try again.');
+            // Keep the state active to allow retry
         }
     });
 };
