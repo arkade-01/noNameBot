@@ -8,7 +8,9 @@ import {
     TransactionMessage,
     TransactionInstruction,
     AddressLookupTableAccount,
-    Commitment
+    Commitment,
+    RpcResponseAndContext,
+    SignatureResult
 } from "@solana/web3.js";
 import { createFeeTransferInstruction, FIXED_FEE_LAMPORTS } from "./transfer";
 import dotenv from "dotenv"
@@ -174,8 +176,10 @@ export async function executeSwap(
             }, [] as AddressLookupTableAccount[]);
         })(addressLookupTableAddresses);
 
-        // Get latest blockhash
-        const blockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
+        // Get latest blockhash with full response including lastValidBlockHeight
+        const blockhashResponse = await connection.getLatestBlockhash('confirmed');
+        const blockhash = blockhashResponse.blockhash;
+        const lastValidBlockHeight = blockhashResponse.lastValidBlockHeight;
 
         // Create instructions array with proper order
         const instructions: TransactionInstruction[] = [];
@@ -214,19 +218,88 @@ export async function executeSwap(
             maxRetries: 5,
         });
 
-        // Confirm transaction
-        const latestBlockHash = await connection.getLatestBlockhash('confirmed' as Commitment);
-        await connection.confirmTransaction({
-            blockhash: latestBlockHash.blockhash,
-            lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
-            signature: signature,
-        }, 'confirmed');
+        console.log(`Transaction sent with signature: ${signature}`);
 
-        return {
-            success: true,
-            signature,
-            txUrl: `https://solscan.io/tx/${signature}`,
-        };
+        try {
+            // Create the proper confirmation strategy object
+            const confirmationStrategy = {
+                signature,
+                blockhash,
+                lastValidBlockHeight
+            };
+
+            // Set a timeout for confirmation
+            const confirmTimeout = 90000; // 90 seconds
+
+            // Use Promise.race to implement timeout with proper typing
+            const confirmResult = await Promise.race([
+                connection.confirmTransaction(confirmationStrategy, 'confirmed'),
+                new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('Transaction confirmation timeout')), confirmTimeout)
+                )
+            ]) as RpcResponseAndContext<SignatureResult>;
+
+            // Check for transaction errors
+            if (confirmResult.value.err) {
+                throw new Error(`Transaction failed: ${JSON.stringify(confirmResult.value.err)}`);
+            }
+
+            console.log(`Transaction confirmed successfully: ${signature}`);
+
+            return {
+                success: true,
+                signature,
+                txUrl: `https://solscan.io/tx/${signature}`,
+            };
+        } catch (confirmError: any) {
+            console.error(`Transaction confirmation error: ${confirmError.message}`);
+
+            // If we hit a timeout or blockhash expiration, check transaction status directly
+            if (confirmError.message === 'Transaction confirmation timeout' ||
+                confirmError.message.includes('block height exceeded') ||
+                confirmError.message.includes('blockhash not found')) {
+
+                // Wait a moment before checking (in case transaction is still being processed)
+                await new Promise(resolve => setTimeout(resolve, 5000));
+
+                try {
+                    // Check transaction status directly
+                    const status = await connection.getSignatureStatus(signature, {
+                        searchTransactionHistory: true
+                    });
+
+                    // If transaction was actually confirmed despite the error
+                    if (status && status.value && !status.value.err) {
+                        if (status.value.confirmationStatus === 'confirmed' ||
+                            status.value.confirmationStatus === 'finalized') {
+                            console.log(`Transaction verified through direct status check: ${signature}`);
+                            return {
+                                success: true,
+                                signature,
+                                txUrl: `https://solscan.io/tx/${signature}`,
+                            };
+                        }
+                    }
+
+                    if (status?.value?.err) {
+                        return {
+                            success: false,
+                            error: `Transaction failed with error: ${JSON.stringify(status.value.err)}`,
+                            signature
+                        };
+                    }
+                } catch (statusError: any) {
+                    console.error(`Failed to get signature status: ${statusError.message}`);
+                }
+            }
+
+            // If we reach here, the transaction truly failed or couldn't be confirmed
+            return {
+                success: false,
+                error: `Failed to confirm transaction: ${confirmError.message}`,
+                signature
+            };
+        }
 
     } catch (error: unknown) {
         const err = error as SwapError;

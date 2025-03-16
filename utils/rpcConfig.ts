@@ -12,7 +12,7 @@ export const getSolanaConnection = (): Connection => {
     if (!connection) {
         connection = new Connection(api_url, {
             commitment: 'confirmed',
-            confirmTransactionInitialTimeout: 60000})
+            confirmTransactionInitialTimeout: 120000})
     }
     return connection;
 };

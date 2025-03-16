@@ -18,10 +18,10 @@ function formatUSD(amount: number): string {
     return `$${formatNumber(amount)}`;
 }
 
-function calculatePercentageChange(current: number, original: number): number {
-    if (original === 0) return 0; // Avoid division by zero
-    return ((current - original) / Math.abs(original)) * 100;
-}
+// function calculatePercentageChange(current: number, original: number): number {
+//     if (original === 0) return 0; // Avoid division by zero
+//     return ((current - original) / Math.abs(original)) * 100;
+// }
 
 function getPnLEmoji(pnl: number): string {
     return pnl >= 0 ? '🟩' : '🟥';
@@ -36,19 +36,24 @@ export async function formatPosition(position: IPosition, solPrice: number): Pro
     const totalUsdSpent = position.totalUsdSpent || position.totalSolSpent * solPrice;
     const currentUsdValue = position.currentUsdValue || currentValue * solPrice;
 
-    // Calculate PnL percentages correctly
-    const pnlPercentage = position.totalTokens > 0
-        ? calculatePercentageChange(currentValue, entryValue)
+    // Calculate PnL percentages with realized gains
+    // For unrealized PnL, calculate based on current holdings only
+    const unrealizedPnlPercentage = position.totalTokens > 0 && entryValue > 0
+        ? ((currentValue - entryValue) / entryValue) * 100
         : 0;
 
-    // For SOL PnL, calculate based on actual returns vs investment
+    // For SOL PnL including realized gains
+    const realizedGainsSol = position.realizedGainsSol || 0;
+    const totalPnlSol = position.solPnL; // Should include both unrealized and realized
     const solPnlPercentage = position.totalSolSpent > 0
-        ? (position.solPnL / position.totalSolSpent) * 100
+        ? (totalPnlSol / position.totalSolSpent) * 100
         : 0;
 
-    // USD PnL percentage
+    // USD PnL percentage including realized gains
+    const realizedGainsUsd = position.realizedGainsUsd || 0;
+    const totalPnlUsd = currentUsdValue + realizedGainsUsd - totalUsdSpent;
     const usdPnlPercentage = totalUsdSpent > 0
-        ? ((currentUsdValue - totalUsdSpent) / totalUsdSpent) * 100
+        ? (totalPnlUsd / totalUsdSpent) * 100
         : 0;
 
     // Format market cap data
@@ -76,20 +81,51 @@ export async function formatPosition(position: IPosition, solPrice: number): Pro
         return '0';
     }
 
+    // Format numbers with proper commas and decimals
+    function formatNumber(num: number, decimals: number = 2): string {
+        return num.toFixed(decimals);
+    }
+
+    // Format USD amount
+    function formatUSD(amount: number): string {
+        return `$${formatNumber(amount)}`;
+    }
+
+    // Get emoji for PnL
+    function getPnLEmoji(pnl: number): string {
+        return pnl >= 0 ? '🟩' : '🟥';
+    }
+
+    // Calculate total buys and sells counts
+    const buyTrades = position.trades.filter(trade => trade.tokenAmount > 0);
+    const sellTrades = position.trades.filter(trade => trade.tokenAmount < 0);
+
+    const totalBuys = buyTrades.length;
+    const totalSells = sellTrades.length;
+
+    // Calculate total SOL received from sells
+    const totalSolReceived = position.totalSolReceived ||
+        sellTrades.reduce((total, trade) => total + Math.abs(trade.solSpent), 0);
+
     const formattedBalance = formatTokenBalance(position.totalTokens);
     const dexScreenerLink = `https://dexscreener.com/solana/${position.tokenAddress}`;
     const formattedTokenName = `<a href="${dexScreenerLink}">${position.tokenSymbol}</a>`;
     const copyableAddress = `<code>${position.tokenAddress}</code>`;
+
+    // Create the sells section if there are any sells
+    const sellsInfo = totalSells > 0
+        ? `${formatNumber(totalSolReceived, 4)} SOL (${formatUSD(totalSolReceived * solPrice)}) • (${totalSells} sells)`
+        : `N/A • (0 sells)`;
 
     return `${formattedTokenName} - 📈 - ${formatNumber(position.solPnL, 4)} SOL (${formatUSD(position.usdPnL)})
 ${copyableAddress}
 - Price & MC: ${formatUSD(position.currentPrice)} — ${formatMarketCap(position.currentMarketCap)}
 - Entry MC: ${formatMarketCap(position.entryMarketCap)}
 - Balance: ${formattedBalance}
-- Buys: ${formatNumber(position.totalSolSpent, 4)} SOL (${formatUSD(totalUsdSpent)}) • (${position.trades.length} buys)
-- Sells: N/A • (0 sells)
-- PNL USD: ${formatNumber(usdPnlPercentage, 2)}% (${formatUSD(currentUsdValue - totalUsdSpent)}) ${getPnLEmoji(currentUsdValue - totalUsdSpent)}
-- PNL SOL: ${formatNumber(solPnlPercentage, 2)}% (${formatNumber(position.solPnL, 4)} SOL) ${getPnLEmoji(position.solPnL)}
+- Buys: ${formatNumber(position.totalSolSpent, 4)} SOL (${formatUSD(totalUsdSpent)}) • (${totalBuys} buys)
+- Sells: ${sellsInfo}
+- PNL USD: ${formatNumber(usdPnlPercentage, 2)}% (${formatUSD(totalPnlUsd)}) ${getPnLEmoji(totalPnlUsd)}
+- PNL SOL: ${formatNumber(solPnlPercentage, 2)}% (${formatNumber(totalPnlSol, 4)} SOL) ${getPnLEmoji(totalPnlSol)}
 - Current Value: ${formatUSD(currentUsdValue)}`;
 }
 
@@ -612,8 +648,37 @@ Last Update: ${new Date().toLocaleTimeString()}`;
                     timestamp: new Date()
                 };
 
-                // Add the trade to user's record
-                await userDetails.addTrade(trade);
+                // Add the trade to user's record with retry logic
+                let retryAttempts = 0;
+                let success = false;
+
+                while (!success && retryAttempts < 3) {
+                    try {
+                        // Get fresh user data on each retry except the first one
+                        let currentUserDetails = retryAttempts === 0 ?
+                            userDetails :
+                            await getUser(telegram_id);
+
+                        await currentUserDetails.addTrade(trade);
+                        success = true;
+                    } catch (error: unknown) {
+                        console.log(`Attempt ${retryAttempts + 1} failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+
+                        if (error instanceof Error && error.name === 'VersionError') {
+                            retryAttempts++;
+                            // Wait a bit before retrying
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        } else {
+                            // Not a version error, rethrow
+                            throw error;
+                        }
+                    }
+                }
+
+                if (!success) {
+                    console.error('Failed to update database after maximum retries');
+                    // Still continue since blockchain transaction succeeded
+                }
 
                 const successMessage = `✅ Sell Successful!\n\n` +
                     `💰 Sold: ${tokenAmount.toFixed(6)} ${tokenData.tokenSymbol}\n` +
@@ -711,6 +776,7 @@ Last Update: ${new Date().toLocaleTimeString()}`;
     });
 
     // Handle custom sell amount input
+    // Handle custom sell amount input
     bot.on('text', async (ctx, next) => {
         const userId = ctx.from.id;
         const userState = userSellStates.get(userId);
@@ -802,9 +868,37 @@ Last Update: ${new Date().toLocaleTimeString()}`;
                     entryMarketCap: tokenData.tokenInfo.mktCap,
                     timestamp: new Date()
                 };
+                // Add the trade to user's record with retry logic
+                let retryAttempts = 0;
+                let success = false;
 
-                // Add the trade to user's record
-                await userDetails.addTrade(trade);
+                while (!success && retryAttempts < 3) {
+                    try {
+                        // Get fresh user data on each retry except the first one
+                        let currentUserDetails = retryAttempts === 0 ?
+                            userDetails :
+                            await getUser(telegram_id);
+
+                        await currentUserDetails.addTrade(trade);
+                        success = true;
+                    } catch (error: unknown) {
+                        console.log(`Attempt ${retryAttempts + 1} failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+
+                        if (error instanceof Error && error.name === 'VersionError') {
+                            retryAttempts++;
+                            // Wait a bit before retrying
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        } else {
+                            // Not a version error, rethrow
+                            throw error;
+                        }
+                    }
+                }
+
+                if (!success) {
+                    console.error('Failed to update database after maximum retries');
+                    // Still continue since blockchain transaction succeeded
+                }
 
                 const successMessage = `✅ Sell Successful!\n\n` +
                     `💰 Sold: ${customAmount.toFixed(6)} ${tokenData.tokenSymbol}\n` +

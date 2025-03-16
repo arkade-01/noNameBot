@@ -6,7 +6,7 @@ import { BotContext } from "../helper_functions/botContext";
 import getUser from "../helper_functions/getUserInfo";
 import getTokenDecimals from "../helper_functions/tokenmetaData";
 import { getTopTraders } from "../helper_functions/topTraders";
-import { WalletTrackerService, TokenInfo } from "../helper_functions/trackWallet"; // Import from your new file
+import { WalletTrackerService, TokenInfo, TokenSale } from "../helper_functions/trackWallet";
 
 dotenv.config();
 
@@ -100,6 +100,23 @@ const formatTokenPurchase = (token: TokenInfo): string => {
   return message;
 };
 
+// Format token sale for Telegram message
+const formatTokenSale = (token: TokenSale): string => {
+  const formattedAmount = (token.amount / Math.pow(10, token.decimals)).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6
+  });
+
+  let message = "💰 *Token Sale Detected* 💰\n\n";
+  message += `*Token:* ${token.symbol} (${token.name})\n`;
+  message += `*Amount Sold:* ${formattedAmount}\n`;
+  message += `*Token Address:* \`${token.address}\`\n`;
+  message += `*Time:* ${new Date(token.saleTime).toLocaleString()}\n`;
+  message += `*Transaction:* \`${token.txHash.substring(0, 20)}...\`\n\n`;
+
+  return message;
+};
+
 // Get the main copy trading menu
 const getCopyTradingMenu = () => {
   return {
@@ -172,7 +189,7 @@ const startWalletTracking = async (bot: Telegraf<BotContext>, chatId: number, wa
 
     await bot.telegram.sendMessage(
       chatId,
-      `✅ Started tracking wallet: ${walletAddress}\n\nYou'll receive notifications when this wallet purchases new tokens!`,
+      `✅ Started tracking wallet: ${walletAddress}\n\nYou'll receive notifications when this wallet purchases or sells tokens!`,
       {
         reply_markup: getCopyTradingMenu()
       }
@@ -276,9 +293,9 @@ const initializeTrackerService = async (): Promise<boolean> => {
   }
 };
 
-// Setup token purchase event handlers for all users
-// Setup token purchase event handlers for all users
-const setupTokenPurchaseHandlers = (bot: Telegraf<BotContext>) => {
+// Setup token purchase and sale event handlers
+const setupTokenEventHandlers = (bot: Telegraf<BotContext>) => {
+  // Handle purchase events
   trackerService.on('token:purchased', async (tokenInfo: any) => {
     try {
       // Extract the telegram ID from the event data
@@ -304,6 +321,26 @@ const setupTokenPurchaseHandlers = (bot: Telegraf<BotContext>) => {
       console.error('Error sending token purchase notification:', error);
     }
   });
+
+  // Handle sale events (notifications only)
+  trackerService.on('token:sold', async (tokenInfo: any) => {
+    try {
+      // Extract the telegram ID from the event data
+      const chatId = parseInt(tokenInfo.telegramId || '0');
+
+      if (!chatId) {
+        console.error('Missing chat ID for token sale notification');
+        return;
+      }
+
+      const message = formatTokenSale(tokenInfo);
+      await bot.telegram.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+
+      // No action buttons - just notifications for sales
+    } catch (error) {
+      console.error('Error sending token sale notification:', error);
+    }
+  });
 };
 
 // Main copy trading module
@@ -311,7 +348,8 @@ const copyTrading = (bot: Telegraf<BotContext>) => {
   // Initialize the tracker service when the bot starts
   initializeTrackerService().then(success => {
     if (success) {
-      setupTokenPurchaseHandlers(bot);
+      // Use the updated function that handles both buys and sells
+      setupTokenEventHandlers(bot);
     } else {
       console.error('WARNING: Copy trading feature may not work properly due to initialization failure');
     }
@@ -560,7 +598,7 @@ const copyTrading = (bot: Telegraf<BotContext>) => {
     }
   });
 
-  // Handle text messages (for entering addresses) - with proper state checking
+  // Handle text messages (for entering addresses or custom amounts)
   bot.on('text', async (ctx, next) => {
     const userId = ctx.from.id;
     const userState = userStates.get(userId);

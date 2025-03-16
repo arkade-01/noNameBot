@@ -14,6 +14,8 @@ export interface ITrade {
     usdPnL: number;
     entryMarketCap: number;
     timestamp: Date;
+    realizedGainSol?: number; // Track realized gains for sells
+    realizedGainUsd?: number; // Track realized gains in USD
 }
 
 // Interface for positions
@@ -33,6 +35,10 @@ export interface IPosition {
     entryMarketCap: number;
     lastPriceUpdate?: Date;
     currentUsdValue?: number; // New field for current USD value
+    realizedGainsSol?: number; // Track total realized gains in SOL
+    realizedGainsUsd?: number; // Track total realized gains in USD
+    totalSoldTokens?: number; // Track how many tokens were sold
+    totalSolReceived?: number; // Track how much SOL was received from sells
 }
 
 // Define Trade Schema
@@ -48,7 +54,9 @@ const tradeSchema = new Schema({
     solPnL: { type: Number, default: 0 },
     usdPnL: { type: Number, default: 0 },
     timestamp: { type: Date, default: Date.now },
-    entryMarketCap: { type: Number, required: true, default: 0 }
+    entryMarketCap: { type: Number, required: true, default: 0 },
+    realizedGainSol: { type: Number, required: false },
+    realizedGainUsd: { type: Number, required: false }
 });
 
 // Define Position Schema
@@ -67,7 +75,11 @@ const positionSchema = new Schema({
     currentMarketCap: { type: Number, required: true, default: 0 },
     entryMarketCap: { type: Number, required: true, default: 0 },
     lastPriceUpdate: { type: Date, default: Date.now, required: false },
-    currentUsdValue: { type: Number, required: false } // New field for current USD value
+    currentUsdValue: { type: Number, required: false }, // New field for current USD value
+    realizedGainsSol: { type: Number, default: 0 },
+    realizedGainsUsd: { type: Number, default: 0 },
+    totalSoldTokens: { type: Number, default: 0 },
+    totalSolReceived: { type: Number, default: 0 }
 });
 
 // Updated User Interface
@@ -102,33 +114,94 @@ userSchema.methods.addTrade = async function (trade: ITrade): Promise<void> {
 
     let position = this.positions?.find((p: IPosition) => p.tokenAddress === trade.tokenAddress);
 
+    // Initialize realized gains tracking fields if not present
+    if (position && position.realizedGainsSol === undefined) {
+        position.realizedGainsSol = 0;
+        position.realizedGainsUsd = 0;
+        position.totalSoldTokens = 0;
+        position.totalSolReceived = 0;
+    }
+
     if (position) {
-        // Update existing position
-        position.totalTokens += trade.tokenAmount;
-        position.totalSolSpent += trade.solSpent;
-        // Update USD spent if available
-        if (trade.usdSpent) {
-            position.totalUsdSpent = (position.totalUsdSpent || 0) + trade.usdSpent;
+        // Check if this is a buy or sell
+        const isSell = trade.tokenAmount < 0;
+
+        if (isSell) {
+            // SELL OPERATION
+            // Calculate average cost of tokens being sold
+            const avgCostPerToken = position.averageBuyPrice || 0;
+
+            // Calculate how much was initially spent on these tokens
+            const costBasisSol = Math.abs(trade.tokenAmount) * avgCostPerToken;
+
+            // Calculate realized gain for this sell
+            // realizedGain = soldFor - costBasis
+            const realizedGainSol = Math.abs(trade.solSpent) - costBasisSol;
+
+            // Add realized gain to the trade record for tracking
+            trade.realizedGainSol = realizedGainSol;
+
+            // Update USD realized gains if available
+            if (trade.usdSpent) {
+                const costBasisUsd = costBasisSol * (trade.usdSpent / Math.abs(trade.solSpent));
+                trade.realizedGainUsd = Math.abs(trade.usdSpent) - costBasisUsd;
+
+                // Update position USD realized gains
+                position.realizedGainsUsd = (position.realizedGainsUsd || 0) + (trade.realizedGainUsd || 0);
+            }
+
+            // Update position realized gains
+            position.realizedGainsSol = (position.realizedGainsSol || 0) + realizedGainSol;
+            position.totalSoldTokens = (position.totalSoldTokens || 0) + Math.abs(trade.tokenAmount);
+            position.totalSolReceived = (position.totalSolReceived || 0) + Math.abs(trade.solSpent);
+
+            // For a sell, we reduce totalTokens but don't change totalSolSpent
+            // since that represents the cost basis of the original purchase
+            position.totalTokens += trade.tokenAmount; // This will subtract tokens since amount is negative
+        } else {
+            // BUY OPERATION
+            // Update basic position fields
+            position.totalTokens += trade.tokenAmount;
+            position.totalSolSpent += trade.solSpent;
+
+            // Update USD spent if available
+            if (trade.usdSpent) {
+                position.totalUsdSpent = (position.totalUsdSpent || 0) + trade.usdSpent;
+            }
         }
+
         position.currentPrice = trade.currentPrice;
         position.currentMarketCap = trade.entryMarketCap;
         position.trades.push(trade);
-        position.lastPriceUpdate = new Date(); // Update timestamp
+        position.lastPriceUpdate = new Date();
 
-        // Fix: Check for zero tokens to prevent Infinity
+        // Fix: Recalculate average buy price only for remaining tokens
         if (position.totalTokens > 0) {
-            position.averageBuyPrice = position.totalSolSpent / position.totalTokens;
+            // If we have sell history, we need cost basis for remaining tokens
+            if (position.totalSoldTokens && position.totalSoldTokens > 0) {
+                // For accurate average purchase price, we need to account for specific tokens sold
+                // Either using FIFO, LIFO, or average cost method
+                // Using average cost here:
+                position.averageBuyPrice = position.totalSolSpent / position.totalTokens;
+            } else {
+                // Simple case when no sells have occurred
+                position.averageBuyPrice = position.totalSolSpent / position.totalTokens;
+            }
         } else {
-            position.averageBuyPrice = 0; // Set to 0 instead of Infinity
+            position.averageBuyPrice = 0;
         }
 
+        // Calculate current values
         const solValueAtCurrentPrice = position.totalTokens * position.currentPrice;
-        position.solPnL = solValueAtCurrentPrice - position.totalSolSpent;
+
+        // Total PnL = Current Value + Realized Gains - Total Spent
+        position.solPnL = solValueAtCurrentPrice + (position.realizedGainsSol || 0) - position.totalSolSpent;
 
         // Calculate USD values if possible
         if (trade.usdSpent) {
-            position.currentUsdValue = solValueAtCurrentPrice * (trade.usdSpent / trade.solSpent);
-            position.usdPnL = position.currentUsdValue - (position.totalUsdSpent || 0);
+            const solToUsdRate = trade.usdSpent / trade.solSpent;
+            position.currentUsdValue = solValueAtCurrentPrice * solToUsdRate;
+            position.usdPnL = position.currentUsdValue + (position.realizedGainsUsd || 0) - (position.totalUsdSpent || 0);
         }
     } else if (trade.tokenAmount > 0) {
         // Create new position with lastPriceUpdate and USD fields
@@ -147,7 +220,11 @@ userSchema.methods.addTrade = async function (trade: ITrade): Promise<void> {
             currentMarketCap: trade.entryMarketCap,
             entryMarketCap: trade.entryMarketCap,
             lastPriceUpdate: new Date(),
-            currentUsdValue: trade.usdSpent // Initialize current USD value if available
+            currentUsdValue: trade.usdSpent, // Initialize current USD value if available
+            realizedGainsSol: 0,
+            realizedGainsUsd: 0,
+            totalSoldTokens: 0,
+            totalSolReceived: 0
         };
         this.positions.push(newPosition);
     }
@@ -176,30 +253,73 @@ userSchema.methods.getPositions = async function (): Promise<IPosition[]> {
             entryMarketCap: trade.entryMarketCap,
             currentMarketCap: 0,
             lastPriceUpdate: new Date(), // Include lastPriceUpdate
-            currentUsdValue: 0 // Initialize current USD value
+            currentUsdValue: 0, // Initialize current USD value
+            realizedGainsSol: 0,
+            realizedGainsUsd: 0,
+            totalSoldTokens: 0,
+            totalSolReceived: 0
         };
 
-        current.totalTokens += trade.tokenAmount;
-        current.totalSolSpent += trade.solSpent;
+        // Check if this is a buy or sell
+        const isSell = trade.tokenAmount < 0;
 
-        // Add USD spent if available
-        if (trade.usdSpent) {
-            current.totalUsdSpent! += trade.usdSpent;
+        if (isSell) {
+            // For sells, we need to track realized gains
+            // This is a simplified version; a full implementation would calculate 
+            // the cost basis based on the position's average buy price at time of sell
+            const tokensSold = Math.abs(trade.tokenAmount);
+            const solReceived = Math.abs(trade.solSpent);
+
+            current.totalSoldTokens! += tokensSold;
+            current.totalSolReceived! += solReceived;
+
+            // If the trade has realizedGain data, use it
+            if (trade.realizedGainSol !== undefined) {
+                current.realizedGainsSol! += trade.realizedGainSol;
+            }
+
+            if (trade.realizedGainUsd !== undefined && trade.usdSpent) {
+                current.realizedGainsUsd! += trade.realizedGainUsd;
+            }
+        } else {
+            // For buys, we increase the investment amounts
+            current.totalSolSpent += trade.solSpent;
+
+            if (trade.usdSpent) {
+                current.totalUsdSpent! += trade.usdSpent;
+            }
         }
 
+        // Update token count regardless of buy or sell
+        current.totalTokens += trade.tokenAmount;
         current.trades.push(trade);
 
-        // Fix: Safe calculation of average buy price
-        if (current.totalTokens > 0) {
-            current.averageBuyPrice = current.totalSolSpent / current.totalTokens;
-        } else {
-            current.averageBuyPrice = 0; // Set to 0 instead of Infinity
-        }
-
+        // Update latest price
         current.currentPrice = trade.currentPrice;
 
         positions.set(key, current);
     });
+
+    // Calculate averages and PnL for all positions
+    for (const [key, position] of positions.entries()) {
+        // Fix: Safe calculation of average buy price
+        if (position.totalTokens > 0) {
+            position.averageBuyPrice = position.totalSolSpent / position.totalTokens;
+        } else {
+            position.averageBuyPrice = 0;
+        }
+
+        // Calculate PnL with realized gains
+        const currentValue = position.totalTokens * position.currentPrice;
+        position.solPnL = currentValue + (position.realizedGainsSol || 0) - position.totalSolSpent;
+
+        // Calculate USD values if we have the data
+        if (position.totalUsdSpent && position.totalUsdSpent > 0) {
+            const usdPerSol = position.totalUsdSpent / position.totalSolSpent;
+            position.currentUsdValue = currentValue * usdPerSol;
+            position.usdPnL = position.currentUsdValue + (position.realizedGainsUsd || 0) - position.totalUsdSpent;
+        }
+    }
 
     return Array.from(positions.values());
 };
