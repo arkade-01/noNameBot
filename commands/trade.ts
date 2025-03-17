@@ -35,7 +35,8 @@ const formatTokenResponse = async (data: any, quote: any, telegram_id: string, a
 
     if (quote && !quote.error) {
         const decimals = await getTokenDecimals(data.address);
-        const tokensReceived = escapeMarkdown((Number(quote.outAmount) / Math.pow(10, decimals)).toString());        const slippage = escapeMarkdown((quote.slippageBps / 100).toString());
+        const tokensReceived = escapeMarkdown((Number(quote.outAmount) / Math.pow(10, decimals)).toString());
+        const slippage = escapeMarkdown((quote.slippageBps / 100).toString());
         const impact = escapeMarkdown((Number(quote.priceImpactPct) || 0).toFixed(2));
         const balance = escapeMarkdown(userDetails.userBalance.toFixed(4));
         const solAmount = escapeMarkdown(amount.toString());
@@ -48,6 +49,73 @@ const formatTokenResponse = async (data: any, quote: any, telegram_id: string, a
     }
 
     return baseResponse;
+};
+
+// New function to handle refreshing token data
+const refreshTokenData = async (ctx: BotContext) => {
+    try {
+        const tokenCA = ctx.session.tokenCA;
+        if (!tokenCA) {
+            await ctx.reply('No token address found. Please enter a token address first.');
+            return;
+        }
+
+        if (!ctx.from) {
+            await ctx.reply('Unable to identify user. Please try again.');
+            return;
+        }
+        const telegram_id = ctx.from.id.toString();
+
+        // Show loading message
+        const loadingMessage = await ctx.reply('🔄 Refreshing token data...');
+
+        const tokenData = await scanToken(tokenCA);
+        if (!tokenData) {
+            await ctx.deleteMessage(loadingMessage.message_id);
+            await ctx.reply('Token not found or invalid address.');
+            return;
+        }
+
+        let quote;
+        try {
+            quote = await getQuote(tokenCA, true, 1e9); // Quote for 1 SOL
+        } catch (error) {
+            console.error('Error fetching quote:', error);
+            quote = { error: true };
+        }
+
+        const formattedResponse = await formatTokenResponse(tokenData, quote, telegram_id);
+
+        const keyboard = Markup.inlineKeyboard([
+            [
+                Markup.button.callback('0.1 SOL', 'buy_0.1'),
+                Markup.button.callback('0.5 SOL', 'buy_0.5'),
+                Markup.button.callback('1 SOL', 'buy_1')
+            ],
+            [
+                Markup.button.callback('2 SOL', 'buy_2'),
+                Markup.button.callback('5 SOL', 'buy_5'),
+                Markup.button.callback('10 SOL', 'buy_10')
+            ],
+            [
+                Markup.button.callback('Custom Amount', 'buy_custom'),
+                Markup.button.callback('🔄 Refresh', 'refresh_token')
+            ],
+            [Markup.button.callback('Back to Trade Menu', 'trade')]
+        ]);
+
+        // Delete loading message
+        await ctx.deleteMessage(loadingMessage.message_id);
+
+        // Send refreshed data
+        await ctx.reply(formattedResponse, {
+            parse_mode: "MarkdownV2",
+            reply_markup: keyboard.reply_markup
+        });
+    } catch (error) {
+        console.error('Error refreshing token:', error);
+        await ctx.reply('An error occurred while refreshing the token data. Please try again.');
+    }
 };
 
 const tradeCommand = (bot: Telegraf<BotContext>) => {
@@ -78,6 +146,23 @@ const tradeCommand = (bot: Telegraf<BotContext>) => {
         } catch (error) {
             console.error('Error in trade action:', error);
             await ctx.answerCbQuery('An error occurred. Please try again.');
+        }
+    });
+
+    // Handle refresh action
+    bot.action('refresh_token', async (ctx) => {
+        try {
+            await ctx.answerCbQuery('Refreshing token data...');
+
+            // Delete the previous message with the outdated data
+            if (ctx.callbackQuery && 'message' in ctx.callbackQuery) {
+                await ctx.deleteMessage();
+            }
+
+            await refreshTokenData(ctx);
+        } catch (error) {
+            console.error('Error in refresh action:', error);
+            await ctx.answerCbQuery('An error occurred while refreshing. Please try again.');
         }
     });
 
@@ -128,7 +213,8 @@ const tradeCommand = (bot: Telegraf<BotContext>) => {
                     Markup.button.callback('10 SOL', 'buy_10')
                 ],
                 [
-                    Markup.button.callback('Custom Amount', 'buy_custom')
+                    Markup.button.callback('Custom Amount', 'buy_custom'),
+                    Markup.button.callback('🔄 Refresh', 'refresh_token')
                 ],
                 [Markup.button.callback('Back to Trade Menu', 'trade')]
             ]);
