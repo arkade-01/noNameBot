@@ -35,6 +35,9 @@ const generateWelcomeMessage = async (ctx: BotContext, isReturn = false) => {
             Markup.button.callback('LeaderBoard', 'leaderboard'),
             Markup.button.callback('Help', 'help')
         ],
+        [
+            Markup.button.callback('Refresh', 'start')
+        ]
     ]);
 
     // Create welcome message with proper escaping
