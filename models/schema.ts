@@ -82,6 +82,19 @@ const positionSchema = new Schema({
     totalSolReceived: { type: Number, default: 0 }
 });
 
+// Referral Interface and Schema
+export interface IReferral {
+    code: string;
+    createdAt: Date;
+    referredUser: string;
+}
+
+const referralSchema = new Schema({
+    code: { type: String, required: true },
+    createdAt: { type: Date, default: Date.now },
+    referredUser: { type: String, required: true }
+});
+
 // Updated User Interface
 export interface IUser extends Document {
     telegram_id: string;
@@ -91,6 +104,11 @@ export interface IUser extends Document {
     lastUpdatedbalance: Date | null;
     trades: ITrade[];
     positions: IPosition[];
+    referralCode: string;
+    referralCount: number;
+    referredBy: string | null;
+    referrals: IReferral[];
+    referralRewards: number; // Reward amount earned from referrals
     addTrade: (trade: ITrade) => Promise<void>;
     getPositions: () => Promise<IPosition[]>;
 }
@@ -103,11 +121,16 @@ const userSchema = new Schema({
     userBalance: { type: Number, default: 0 },
     lastUpdatedbalance: { type: Date, default: null },
     trades: [tradeSchema],
-    positions: [positionSchema]
+    positions: [positionSchema],
+    // Referral System Fields
+    referralCode: { type: String, unique: true, sparse: true },
+    referralCount: { type: Number, default: 0 },
+    referredBy: { type: String, default: null },
+    referrals: [referralSchema],
+    referralRewards: { type: Number, default: 0 }
 }, {
     timestamps: true
 });
-
 // Fix for addTrade method in userSchema
 userSchema.methods.addTrade = async function (trade: ITrade): Promise<void> {
     this.trades.push(trade);

@@ -1,11 +1,15 @@
 import { Telegraf, Markup } from 'telegraf';
 import { BotContext } from '../helper_functions/botContext';
 import getUser from '../helper_functions/getUserInfo';
+import User from '../models/schema';
+import { handleReferral } from '../helper_functions/refferal';
 
 // Helper function to escape special characters for MarkdownV2
 const escapeMarkdown = (text: string): string => {
     return text.replace(/[_*[\]()~`>#+=|{}.!]/g, '\\$&');
 };
+
+
 
 // Function to generate the welcome message and keyboard
 const generateWelcomeMessage = async (ctx: BotContext, isReturn = false) => {
@@ -36,6 +40,7 @@ const generateWelcomeMessage = async (ctx: BotContext, isReturn = false) => {
             Markup.button.callback('Help', 'help')
         ],
         [
+            Markup.button.callback('Referral', 'referral'),
             Markup.button.callback('Refresh', 'start')
         ]
     ]);
@@ -56,10 +61,26 @@ const generateWelcomeMessage = async (ctx: BotContext, isReturn = false) => {
 };
 
 const startCommand = (bot: Telegraf<BotContext>) => {
-    // Regular /start command handler
+    // Regular /start command handler with referral detection
     bot.start(async (ctx) => {
         try {
             console.log('Start command triggered');
+
+            const startPayload = ctx.startPayload; // Get the part after /start
+            const userId = ctx.from?.id.toString();
+
+            if (!userId) return;
+
+            // Check if it's a referral link
+            const isReferral = startPayload?.startsWith("REF_");
+            let referralCode = isReferral ? startPayload.substring(4) : null;
+
+            // Handle referral if present
+            if (referralCode) {
+                await handleReferral(ctx, bot, userId, referralCode);
+            }
+
+            // Display the welcome dashboard
             const { welcomeMessage, keyboard } = await generateWelcomeMessage(ctx);
             await ctx.reply(welcomeMessage, {
                 parse_mode: 'MarkdownV2',
@@ -96,6 +117,6 @@ const startCommand = (bot: Telegraf<BotContext>) => {
             await ctx.reply('An error occurred while refreshing the menu.');
         }
     });
-};
+}
 
 export default startCommand;
