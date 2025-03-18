@@ -16,7 +16,7 @@ export const generateReferralCode = (userId: string): string => {
 export const processReferralReward = async (bot: Telegraf<BotContext>, referrer: any) => {
   try {
     // Example reward structure - customize based on your needs
-    const REFERRAL_REWARD = 1; // SOL reward per referral
+    const REFERRAL_REWARD = 10; // SOL reward per referral
 
     // Add reward to user's balance
     referrer.referralRewards = (referrer.referralRewards || 0) + REFERRAL_REWARD;
